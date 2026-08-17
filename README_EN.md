@@ -812,11 +812,16 @@ Infers from user behavior:
 - **Deep Needs** — Psychological content drivers
 - **Speculative Interests** — System-predicted potential interest domains (e.g., molecular gastronomy, architectural aesthetics, watchmaking...)
 
+### Embeddable Backend Core
+
+The backend can now run inside a Python host such as NEKO without HTTP. `OpenBiliClawCore` owns runtime construction, background tasks, hot reload, and resource shutdown, while exposing profile, recommendation, dialogue, and event operations. FastAPI/uvicorn is an adapter around the same Core, so existing CLI and HTTP clients remain compatible. See the [Core module documentation](docs/modules/core.md) for the minimal integration and ownership contract.
+
 ## 🏗️ Project Structure
 
 ```
 OpenBiliClaw/
 ├── src/openbiliclaw/          # Python backend core
+│   ├── core.py                # Embeddable lifecycle and host API shared by NEKO/FastAPI
 │   ├── agent/                 # Agent orchestration & Skill system
 │   ├── soul/                  # Soul Engine (profiling · MBTI · interest/avoidance probes)
 │   ├── memory/                # Multi-layer memory system

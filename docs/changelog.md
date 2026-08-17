@@ -6,6 +6,7 @@
 
 ## 未发布
 
+- **后端收缩为可嵌入 Core**：新增公开 `OpenBiliClawCore`，不启动 FastAPI/uvicorn 即可构建运行时、管理启动/停止/热重载，并直接调用画像、推荐、对话与事件发布；后台 refresh/account-sync/auto-update 任务及运行时资源改由 Core 持有。`create_app(core=...)` 变为 HTTP 适配层，同时默认路径仍自动创建同一 Core，现有 CLI、HTTP 路由和依赖注入入口保持兼容，为后续嵌入 NEKO 提供稳定边界。
 - **浏览器插件收敛为轻量连接器**：side panel / popup 不再重复承载推荐、内容库、画像、对话、guided init 和完整后端配置，只保留后端连接、当前来源识别、11 个来源状态、手动身份同步、主应用入口、端点配置与远程设备配对。后台跨站行为采集、Cookie / 登录态同步和只读来源任务 dispatcher 保持不变；手动同步仅复用既有身份上报，不触发点赞、收藏、关注等上游账号写操作。完整使用体验统一进入桌面 Web `/web`。
 - **修复 Windows PowerShell 5.1 安装器在 clone 成功后静默退出（issue #177）**：`install.ps1` 现在在检查 `$LASTEXITCODE` 前捕获 `git clone` 的 stderr；PS 5.1 不再把 Git 的正常进度输出误判为终止错误，完整 clone 会继续运行 bootstrap，真实 clone 失败仍会显示 Git 原始诊断并清理临时日志。
 - **修复桌面 Web 关闭自动续页后后台仍消耗可换库存（issue #81）**：已有推荐卡片时切回标签页、配置应用和状态水合不再请求可能触发首屏补池的 `/api/recommendations`，只同步 runtime / 库存状态；只有空列表首屏或用户明确手动刷新才读取推荐快照，已显示卡片和库存开关边界保持稳定。

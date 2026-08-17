@@ -808,11 +808,16 @@ durable turn → 固定时间/payload → 确认入口（待聊列表/卡片） 
 - **深层需求** — 心理层面的内容驱动力
 - **猜测兴趣** — 系统推测的潜在兴趣方向（分子料理、建筑美学、制表工艺...）
 
+### 可嵌入后端 Core
+
+后端现在可不经 HTTP 直接嵌入 NEKO 等 Python 宿主：`OpenBiliClawCore` 统一负责运行时构建、后台任务、热重载与资源关闭，并提供画像、推荐、对话和事件发布入口。FastAPI/uvicorn 只是同一 Core 的网络适配层，现有 CLI 与 HTTP 客户端无需改变。最小接入方式与所有权边界见 [Core 模块文档](docs/modules/core.md)。
+
 ## 🏗️ 项目结构
 
 ```
 OpenBiliClaw/
 ├── src/openbiliclaw/          # Python 后端核心
+│   ├── core.py                # 可嵌入生命周期与宿主 API（NEKO / FastAPI 共用）
 │   ├── agent/                 # Agent 编排和 Skill 系统
 │   ├── soul/                  # 用户灵魂引擎 (深度画像 · MBTI · 兴趣/避雷探针)
 │   ├── memory/                # 多层网状记忆系统

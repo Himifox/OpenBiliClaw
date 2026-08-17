@@ -14,7 +14,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 概述
 
-`src/openbiliclaw/runtime/` 负责后端 daemon 的长期运行能力：后台刷新、账号同步、扩展在线账号信号周期回拉、反馈批学习调度、运行时事件流、浏览器插件 presence gate、自动更新和任务生命周期管理。FastAPI 启动后会通过 `RuntimeContext` 持有这些 runtime 服务，配置热重载时重建可替换组件。
+`src/openbiliclaw/runtime/` 负责后端 daemon 的长期运行能力：后台刷新、账号同步、扩展在线账号信号周期回拉、反馈批学习调度、运行时事件流、浏览器插件 presence gate、自动更新和任务生命周期管理。`OpenBiliClawCore` 通过 `RuntimeContext` 持有这些 runtime 服务和后台任务，配置热重载时重建可替换组件；FastAPI 只把 HTTP/API 专属协调器接到同一个 Core 上。Core 的宿主契约见 [`core.md`](core.md)。
 
 ## 已实现功能
 

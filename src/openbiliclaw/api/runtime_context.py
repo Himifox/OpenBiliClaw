@@ -1,10 +1,8 @@
 """Mutable runtime component container with config hot-reload support.
 
-All FastAPI endpoint closures access runtime components through a single
-``RuntimeContext`` instance.  When configuration changes at runtime (via
-``PUT /api/config``), the context atomically rebuilds every swappable
-component so the new settings take effect immediately — no server restart
-required.
+Every host accesses runtime components through a single ``RuntimeContext``
+instance. When configuration changes, the context atomically rebuilds every
+swappable component so new settings take effect without recreating the host.
 
 **Stable components** (never rebuilt):
   - ``database`` — owns the SQLite connection
@@ -39,8 +37,6 @@ from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-    from fastapi import FastAPI
 
     from openbiliclaw.config import Config
     from openbiliclaw.soul.dialogue_learn_queue import (
@@ -1740,18 +1736,19 @@ class RuntimeContext:
 
     async def restart_background_tasks(
         self,
-        app: FastAPI,
+        task_owner: Any,
         *,
         run_post_reload_llm_work: bool = True,
     ) -> None:
         """Cancel old background tasks and start new ones from current components."""
+        task_state = getattr(task_owner, "state", task_owner)
         # Cancel existing tasks. A third-party/provider coroutine may swallow
         # cancellation; never let a config hot-reload (which precedes guided
         # init reservation) wait forever and look like a dead POST /api/init.
         stuck_tasks: set[str] = set()
         current_loop = asyncio.get_running_loop()
         for attr in ("refresh_task", "account_sync_task", "auto_update_task"):
-            task = getattr(app.state, attr, None)
+            task = getattr(task_state, attr, None)
             if task is not None:
                 # TestClient and embedded hosts may reuse RuntimeContext across
                 # event-loop lifetimes. A pending Task owned by a closed/foreign
@@ -1805,7 +1802,7 @@ class RuntimeContext:
         if run_post_reload_llm_work:
             run_forever = getattr(self.runtime_controller, "run_forever", None)
             if "refresh_task" not in stuck_tasks:
-                app.state.refresh_task = (
+                task_state.refresh_task = (
                     self.task_registry.track("refresh_loop", run_forever())
                     if callable(run_forever)
                     else None
@@ -1813,20 +1810,20 @@ class RuntimeContext:
 
             sync_forever = getattr(self.account_sync_service, "run_forever", None)
             if "account_sync_task" not in stuck_tasks:
-                app.state.account_sync_task = (
+                task_state.account_sync_task = (
                     self.task_registry.track("account_sync_loop", sync_forever())
                     if callable(sync_forever)
                     else None
                 )
         else:
             if "refresh_task" not in stuck_tasks:
-                app.state.refresh_task = None
+                task_state.refresh_task = None
             if "account_sync_task" not in stuck_tasks:
-                app.state.account_sync_task = None
+                task_state.account_sync_task = None
 
         update_forever = getattr(self.auto_update_service, "run_forever", None)
         if "auto_update_task" not in stuck_tasks:
-            app.state.auto_update_task = (
+            task_state.auto_update_task = (
                 self.task_registry.track("auto_update_loop", update_forever())
                 if callable(update_forever)
                 else None

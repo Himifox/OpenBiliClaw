@@ -189,6 +189,7 @@ from openbiliclaw.api.models import (
     ZhihuSourceConfigOut,
     validate_saved_item_key,
 )
+from openbiliclaw.core import OpenBiliClawCore
 from openbiliclaw.discovery.temporal import (
     evaluate_temporal_eligibility,
     is_complete_temporal_evidence_marker,
@@ -1828,6 +1829,7 @@ def _is_masked_proxy_echo(value: str) -> bool:
 
 def create_app(
     *,
+    core: OpenBiliClawCore | None = None,
     memory_manager: Any | None = None,
     database: Any | None = None,
     soul_engine: Any | None = None,
@@ -1839,14 +1841,25 @@ def create_app(
     auto_update_service: Any | None = None,
     project_stats_service: Any | None = None,
 ) -> FastAPI:
-    """Create the local backend API app."""
+    """Create the HTTP adapter around an embeddable OpenBiliClaw Core."""
     from openbiliclaw.api.runtime_context import (
         RuntimeContext,
-        build_degraded_runtime_context,
-        build_runtime_context,
     )
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.registry import RegistryBuildError
+
+    legacy_components = (
+        memory_manager,
+        database,
+        soul_engine,
+        dialogue,
+        runtime_controller,
+        recommendation_engine,
+        runtime_event_hub,
+        account_sync_service,
+        auto_update_service,
+    )
+    if core is not None and any(item is not None for item in legacy_components):
+        raise ValueError("Pass either core or individual runtime components, not both.")
 
     app = FastAPI(title="OpenBiliClaw API", default_response_class=JSONResponse)
 
@@ -1869,7 +1882,7 @@ def create_app(
     )
 
     # ── Build RuntimeContext ────────────────────────────────────────
-    config = load_config()
+    config = core.config if core is not None else load_config()
 
     # Mirror the overseas-outbound proxy into the process-level source of truth
     # before any LLM/updater client is built. CN-direct clients never read it.
@@ -2115,23 +2128,19 @@ def create_app(
                 enabled=False,
                 event_publisher=getattr(ctx.event_hub, "publish", None),
             )
+    elif core is not None:
+        ctx = core.context
     else:
-        # Production path: build everything from config.
-        try:
-            ctx = build_runtime_context(
-                config,
-                memory_manager=memory_manager,
-                database=database,
-                event_hub=runtime_event_hub,
-            )
-        except RegistryBuildError as exc:
-            ctx = build_degraded_runtime_context(
-                config,
-                memory_manager=memory_manager,
-                database=database,
-                event_hub=runtime_event_hub,
-                exc=exc,
-            )
+        # Production path: the HTTP layer consumes the same Core that an
+        # embedded host can construct directly.
+        core = OpenBiliClawCore.create(
+            config,
+            memory_manager=memory_manager,
+            database=database,
+            event_hub=runtime_event_hub,
+        )
+        ctx = core.context
+        if core.degraded:
             logger.warning(
                 "FastAPI started in degraded mode (%s): %s",
                 ctx.degraded_reason,
@@ -2142,6 +2151,9 @@ def create_app(
         from openbiliclaw.llm.concurrency import LLMConcurrencyGate
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
+
+    if core is None:
+        core = OpenBiliClawCore.from_context(ctx, config=config)
 
     # The process-lifetime migration guard was acquired for the data directory
     # that was active at startup.  A newly persisted ``data_dir`` must therefore
@@ -2225,6 +2237,7 @@ def create_app(
     update_inventory = getattr(ctx.llm_concurrency_gate, "update_inventory", None)
     if initial_available is not None and callable(update_inventory):
         update_inventory(available=initial_available, target=_inventory_target())
+    app.state.core = core
     app.state.runtime_context = ctx
     auto_replenishment_task: asyncio.Task[None] | None = None
     auto_replenishment_started_at = 0.0
@@ -2935,25 +2948,13 @@ def create_app(
                 else:  # compatibility with narrow injected scheduler fakes
                     feedback_batch_scheduler.schedule()
                     app.state.event_recovery_task = None
-        restart = ctx.restart_background_tasks
-        try:
-            restart_signature = inspect.signature(restart)
-            supports_post_reload_flag = (
-                "run_post_reload_llm_work" in restart_signature.parameters
-                or any(
-                    parameter.kind is inspect.Parameter.VAR_KEYWORD
-                    for parameter in restart_signature.parameters.values()
-                )
-            )
-        except (TypeError, ValueError):
-            supports_post_reload_flag = True
-        if supports_post_reload_flag:
-            await restart(
-                app,
-                run_post_reload_llm_work=run_post_reload_llm_work,
-            )
-        else:  # compatibility with narrow injected test runtimes
-            await restart(app)
+        await core.restart_background_tasks(
+            run_post_reload_llm_work=run_post_reload_llm_work,
+        )
+        # Preserve the old inspection seam for extensions/tests while Core is
+        # now the authoritative task owner.
+        for attr in ("refresh_task", "account_sync_task", "auto_update_task"):
+            setattr(app.state, attr, getattr(core.state, attr, None))
 
     async def _rebuild_runtime_with_lane_handoff(
         new_config: Any,
@@ -6963,42 +6964,12 @@ def create_app(
             with suppress(Exception):
                 await feedback_scheduler.close()
         app.state.event_recovery_task = None
-        refresh_task = getattr(app.state, "refresh_task", None)
-        if refresh_task is not None:
-            refresh_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await refresh_task
-        account_sync_task = getattr(app.state, "account_sync_task", None)
-        if account_sync_task is not None:
-            account_sync_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await account_sync_task
-        auto_update_task = getattr(app.state, "auto_update_task", None)
-        if auto_update_task is not None:
-            auto_update_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await auto_update_task
+        await core.stop()
         # Producers are stopped before their shared image lane. This prevents a
         # refresh tick from enqueueing new prefetch work during coordinator
         # shutdown; close then cancels both active and already-queued fetches.
         with suppress(Exception):
             await image_fetch_coordinator.close()
-        # Drain the self-owned dialogue settlement queue; it is not covered by
-        # the background-task cancellation above.
-        settlement_queue = getattr(ctx, "dialogue_settlement_queue", None)
-        if settlement_queue is not None:
-            with suppress(Exception):
-                await settlement_queue.shutdown(timeout=30)
-        bangumi_client = getattr(ctx, "bangumi_client", None)
-        close_bangumi = getattr(bangumi_client, "aclose", None)
-        if callable(close_bangumi):
-            with suppress(Exception):
-                await close_bangumi()
-        v2ex_client = getattr(ctx, "v2ex_client", None)
-        close_v2ex = getattr(v2ex_client, "aclose", None)
-        if callable(close_v2ex):
-            with suppress(Exception):
-                await close_v2ex()
 
     @app.get("/api/profile-summary", response_model=ProfileSummaryResponse)
     async def profile_summary(

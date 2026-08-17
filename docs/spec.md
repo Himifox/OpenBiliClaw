@@ -282,6 +282,11 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ## 3. 系统架构
 
 ```text
+NEKO / embedded host ─ direct async calls ───────────────┐
+HTTP clients → uvicorn / FastAPI adapter ────────────────┼→ OpenBiliClawCore → RuntimeContext
+CLI server → uvicorn / FastAPI adapter ──────────────────┘        ├→ profile / recommend / chat / events
+                                                                 └→ runtime background-task lifecycle
+
 interactive (dialogue / config probe) ──────────────┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
 background ─ background admission (default 3) ──────┘
