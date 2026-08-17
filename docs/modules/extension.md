@@ -1,19 +1,18 @@
 # 浏览器插件模块
 
-> popup 的 LLM 总并发 placeholder/读取/保存 fallback 同步为 4；候选评估并发可设 `1..3`（默认 3、每批 30 条、最多 90 条 raw 在途），后台容量仍由后端派生。DeepSeek Reasoning 在插件与桌面 Web 都以 `medium` 为默认选项，空值明确显示为「关闭」并原样保存。
+> 2026-08-17 起，popup 仅作为浏览器连接器；推荐、内容库、画像、对话、guided init 与完整后端配置由桌面 / 移动 Web 承载。本页较早的里程碑记录若提到 popup 业务界面，均由本次边界调整取代。
 
 ## 模块范围
 
 `extension/` 是浏览器插件子项目（Chrome / Edge / Brave 主构建，Firefox 与 Safari 独立构建），负责：
 
-- 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do 等支持站点采集行为事件或执行来源任务（平台无关内核 + 平台适配器）
-- 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / V2EX 等支持站点采集行为事件或执行来源任务（平台无关内核 + 平台适配器）
+- 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / Linux.do / V2EX / 微博等支持来源采集行为事件、同步登录态或执行只读来源任务（平台无关内核 + 平台适配器）
 - 通过 background service worker 缓冲并上报到本地后端
-- 在 side panel 中展示连接状态、推荐结果、画像和聊天入口
+- 在 side panel / popup 中展示连接状态、当前来源、身份同步和“打开主应用”入口
 
 ### 配置页 HTML 结构约束
 
-插件与桌面 Web 的设置面板都依赖浏览器原生 HTML 解析后再由脚本切换 `hidden` 状态。桌面 Web 平台源列表中的每个来源卡（尤其 Linux.do / V2EX）必须保持同级 `<article>` 节点，并在来源列表结束前闭合；来源卡不能包住后续的来源总览或其它 `data-settings-panel`。修改来源卡片时同步运行 `tests/test_desktop_web_linuxdo_settings.py`，防止标签嵌套导致配置页只剩 tab 栏。
+桌面 Web 设置面板依赖浏览器原生 HTML 解析后再由脚本切换 `hidden` 状态。桌面 Web 平台源列表中的每个来源卡（尤其 Linux.do / V2EX）必须保持同级 `<article>` 节点，并在来源列表结束前闭合；来源卡不能包住后续的来源总览或其它 `data-settings-panel`。修改来源卡片时同步运行 `tests/test_desktop_web_linuxdo_settings.py`，防止标签嵌套导致配置页只剩 tab 栏。插件 popup 已不再复制这套完整配置页。
 
 当前里程碑进度：
 
@@ -23,7 +22,7 @@
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Linux.do 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 与 Linux.do 另有只读插件任务源；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / V2EX 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 通过插件任务源接入初始化 saved/upvoted/subscribed 信号和 discovery search/hot/subreddit/related；V2EX 普通页面只采集被动阅读行为，任务页由独立 dispatcher 执行四个只读 bootstrap scope；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调；`/api/events` 在 soul 画像明确未初始化时只返回 `not_initialized` 拒收结果，不写 memory，首轮画像信号由 guided init 的来源任务拉取 |
-| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 内容库 / 画像 / 对话四个一级 tab；内容库内用「稍后再看 / 收藏 / 历史记录」三个语义子 tab，兼容旧 `?tab=watchLater|favorites|history` 入口。历史按点开、出现未点和最近移除三组分页读取 30 天本地事实，使用 opaque cursor 续页；同一内容的多个移除 context 同卡显示，收藏和稍后再看可独立恢复，封面 lazy + low-priority 走既有代理缓存。历史读取有 12 秒截止时间；续页失败保留已有卡片并显示可访问的重试提示，坏封面显示 SVG fallback。顶部功能区提供「手机版」入口（v0.3.154 起为手机图形 + 「手机版」文字标签，与相邻图标同款白底样式），按当前插件后端地址和 HTTP/HTTPS scheme 生成 `/m/` 扫码链接；460px 以下窄宽度会把 Web、二维码、消息、设置按钮换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会以同一 scheme 调用轻量端点 `GET /api/qr-info`（不触发 embedding readiness probe）并读取响应中的 `lan_ip` 字段，用局域网 IP 生成二维码，提示为 info 状态；后端优先返回 RFC1918 IPv4 并排除 `198.18.x.x` 等 VPN/TUN 地址，没有可用 IPv4 时回退 ULA / global IPv6，二维码生成器会把 IPv6 literal 包进 `[]`；移动 Web 推荐页首屏先渲染 `/api/recommendations`，再异步补 runtime status / activity / delight，慢请求不会让页面无限停在 loading；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐、兴趣猜测和避雷探针的内联聊天也会按 `scope=delight/probe/avoidance_probe` 恢复 pending/completed/failed turn；主聊天与移动/桌面 Web 共用 `session=popup&scope=chat`，聊天 Tab 可见且在线时约每 2.5 秒增量刷新历史，内容未变化不重绘，阅读旧消息时保留滚动位置；底部「最近发生的事」活动栏在四个一级 Tab 始终可见，聊天记录区在剩余空间内独立滚动，输入框固定在聊天区底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
+| 8.3 Browser Connector | ✅ | `popup/` 已收敛为紧凑连接器：显示后端连接、当前网页来源、11 个来源的本地状态和身份同步反馈，保留端点配置与远程设备配对，并把完整体验统一打开到 `/web`。推荐、内容库、画像、对话、guided init、二维码、调度和完整后端配置不再在插件中重复实现。 |
 | Durable 对话失败展示 | ✅ | side panel 的主聊天在 `turn.status === "failed"` 时优先渲染后端持久化的安全 `turn.error`，不把历史遗留 `turn.reply` 误当成功；惊喜/探针内联 turn 只有 `completed` 才显示成功并移除已处理探针，`failed` 显示 `turn.error`、恢复 handled/按钮状态并保留卡片供重试。 |
 | Issue #147 聊聊口味 Markdown 渲染 | ✅ | 主聊天、惊喜推荐和兴趣/避雷探针内嵌聊天复用 `web/shared/dialogue-confirmation.js` 的安全 Markdown renderer；popup、桌面 Web、移动 Web 的 AI 回复支持加粗、斜体、标题、列表、代码块、引用和 `http(s)` 链接，原始 HTML / `javascript:` 等不安全内容不会进入 DOM，用户消息仍按纯文本展示。 |
 | 对话确认入口（Wave C/D + 单队列 cutover） | ✅ | popup、移动 Web 与桌面 Web 共用 `web/shared/dialogue-confirmation.js` 渲染 `hypothesis` 卡片、纯提问气泡和普通文字 turn：卡片提供「准 / 不准 / 聊聊 / 稍后」四动作、可展开依据与原地结算态；纯数字、UUID、事件 / note 前缀、BVID 或裸哈希等只有机器 ID 的依据会整项过滤，过滤后为空则不渲染「依据」区。桌面「待聊确认」与插件保持同一套紧凑视觉：柔和品牌色折叠条、数字徽标、轻量箭头和单列小卡片，不再额外加入说明文案或桌面仪表盘式重容器；猜测卡片仍按标题、依据、结算状态、主次动作分层，430px 以下动作改两列，深浅主题、可见 focus 与 reduced-motion 继续沿用全局设计令牌。action 先乐观更新；同步 `200` 直接采用服务端状态，`already_settled`（包括相反 verdict）覆盖本地乐观结果。收到 `202 processing` 才复用各端既有 `fetchChatTurn` 按 `1s/2s/5s`（随后 5s）读取 durable turn，30 秒总截止；终态立即停，连续读取失败、截止或页面 abort 只把本地卡片标为 `retryable_error`，允许刷新/重试，不伪造 durable 失败。三端各自持有 action AbortController，页面卸载会终止轮询。popup 与移动 Web 的「待聊确认」列表调用 `GET /api/chat/pending-confirmations`，主动打开用 `session="popup"`；桌面端镜像相同语义并用 `session="popup"`，侧栏「聊聊口味」显示待聊计数。三端对话记录和待聊列表都使用有界独立滚动，重绘保留读者位置与已展开依据；聊天可见且在线时约每 2.5 秒增量刷新历史，快照未变化不重绘；移动端动作保持两列 44px 触控目标。待聊数字只在三端对话入口显示；service worker 不请求 `?count_only=1`，也不把待聊数写入工具栏，工具栏角标只表达后端不可达或未初始化。三端的画像/认知更新区均只读，主动确认只存在于 durable 对话卡片。后端 deprecated legacy 端点继续保留，新客户端不调用。 |
@@ -131,14 +130,13 @@ extension/
 │   └── chrome-webstore-upload.mjs
 ├── popup/
 │   ├── popup.html
+│   ├── popup.css
 │   ├── popup.js
-│   ├── popup-autostart-control.js
-│   ├── popup-connection-poller.js # popup HTTP / runtime-stream 三态协调与离线 /api/ping 重探测
-│   ├── popup-saved-sync.js
-│   ├── popup-helpers.js    # popup 纯函数：runtime 状态归一化、探针 key / stale 过滤等
-│   └── shared/             # ⚠️ 构建产物，已 gitignore，勿提交
-│       ├── dialogue-confirmation.js # 卡片 / 待聊 / durable turn 共享语义
-│       └── source-status.js         # 来源状态共享语义；均由 build.mjs 从 web/shared/ 复制
+│   ├── popup-state.js            # 来源 URL / 状态的纯函数
+│   ├── popup-api.js              # 连接器只读 API
+│   ├── popup-backend-config.js   # 后端 endpoint 与 host permission
+│   ├── popup-device-auth.js      # 远程短会话
+│   └── popup-ext-login.js        # 设备配对 UI
 ├── src/
 │   ├── background/
 │   │   ├── buffer.ts
@@ -498,97 +496,27 @@ CLI 入口：
 
 ### `popup/`
 
-`popup/` 目录当前承载 side panel 页面，已具备：
+`popup/` 是轻量浏览器连接器，不再复制完整客户端。当前只保留：
 
-- guided init 来源选择新增 Bangumi 与 V2EX：Bangumi 不要求浏览器登录，选中后显示公开用户名输入，并通过 `source_options.bangumi.username` 发送；V2EX 可填写公开用户名，也可留空由真实 V2EX 页面导航栏观察账号，并通过 `source_options.v2ex.username` 发送。Bangumi-only 空用户名在客户端提示，后端仍会权威拒绝；V2EX 任务页只读采集四个 scope。混合来源空用户名允许继续。popup 把输入草稿保存在页面 state，前置检查失败或 idle 面板重渲染不会丢失；显式清空会原样送到后端，不会回退旧配置用户名。
+- 连接后端：以 `/api/ping` 为轻量探活，显示在线 / 离线状态，支持重新检查并打开当前后端的 `/web` 主应用。
+- 识别当前网页：从 active tab URL 识别 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX 与微博。
+- 展示来源状态：只读 `GET /api/sources/status`，区分已就绪、待验证、需要处理、异常与未启用；来源列表和连接设置采用单开折叠，避免窄侧栏出现超长操作路径。
+- 手动同步身份：`OBC_SYNC_IDENTITIES` 只触发已有 Cookie / 登录态同步函数；它不会点赞、收藏、关注或执行其它上游账号写操作。
+- 连接高级项：`popup-backend-config.js` 继续保存 HTTP(S) / 主机 / 端口；`popup-device-auth.js` 与 `popup-ext-login.js` 继续处理远程设备密钥换取短会话。
 
-- 后端连接状态检查：离线判定以 `/api/ping` 为准，顶部徽标区分绿色「已连接」、琥珀色「重连中」和红色「未连接」。`runtime-stream` 断开时先进入「重连中」并立即复检 `/api/ping`：HTTP 仍通则保留 API 可用状态并等待 WebSocket 自行重连，只有 ping 返回失败或抛错才进入「未连接」并启动 `popup-connection-poller.js` 每 1 秒重探测；HTTP 恢复后先回到「重连中」，流重新打开后才显示「已连接」。协调器使用 revision guard 忽略连接恢复后才返回的旧失败探活，主动切换后端地址关闭旧流也不会触发故障断线提示
-- 设置页的协议（HTTP / HTTPS）、后端地址（默认 `127.0.0.1`）和端口（默认 `8420`）由 `popup-backend-config.js` 一起写入 `chrome.storage.local`。局域网 / 远程地址保存前通过 `optional_host_permissions` 请求精确 origin；公网主机名和公网 IP 不允许 HTTP。官方 Docker 公网入口使用 `docker-compose.https.yml`：协议选 HTTPS、主机填公开 DNS 名称、端口填 443，并用默认关闭的 `ext-key` 设备密钥配对。popup、service worker、任务派发、cookie 同步和调试中继都在调用时解析当前 endpoint；变更后清除旧短会话并重连。远程认证使用 `obc_extension_device_key` 换取结构化 `obc_auth_session`，普通 HTTP 发 Bearer Header，只有 runtime WebSocket 和图片代理 URL 携带短会话 query。设置页的配对状态只以服务端 `/api/auth/status` 返回的 `authenticated` 为准；本地短会话的 `expires_at` 仅用于决定复用或换票，不得覆盖服务端的撤销或 epoch 失效判决。
-- 顶部手机图标会打开移动端二维码面板，二维码完全在 popup 本地生成，指向当前插件后端地址的 `/m/`；scheme 只接受已规范化的 `https`，其他值安全回落 `http`，因此 TLS / Caddy 后端会生成 `https://…/m/` 而不会把明文请求发到 TLS 端口。打开后的 `/m/` 页面已带 PWA manifest 与 iOS Web Clip 元数据，可从手机浏览器保存到主屏幕；当前不提供离线缓存，仍需手机能访问运行中的本地后端。当前 host 仍是 `127.0.0.1` / `localhost` / IPv6 loopback `::1`（含 URL 的 `[::1]` 形态）时，插件会以相同 HTTP/HTTPS scheme 通过轻量 `/api/qr-info` 读取后端探测到的局域网 IP 并替换二维码 host；公网 DNS host 原样保留。端点失败或没有有效 LAN IP 才保留 loopback URL 与警告。在 460px 以下侧边栏宽度，顶部 Web / 二维码 / 消息 / 设置按钮会换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠
-- 设置页调度区的「停止后台 LLM 请求」写入 `scheduler.enabled=false`；开启后会暂停 daemon-owned 定时发现、候选池预计算和画像更新里的 LLM / embedding 调用，推荐列表不会自动补充新内容，候选池为空时可能暂时没有推荐。「关闭浏览器后停止后台」写入 `scheduler.pause_on_extension_disconnect=true`，断开宽限秒数写入 `scheduler.extension_disconnect_grace_seconds`；所有扩展窗口断开并超过宽限期后，后台 LLM / embedding 工作暂停，重新打开浏览器后恢复。手动刷新和显式 CLI / API 操作仍按用户动作执行
-- 从 `/api/recommendations` 拉取推荐列表
-- 从 `/api/profile-summary` 同步 `speculative_interests` 与 `speculative_avoidances`，分别渲染待确认兴趣和待确认避雷方向；正向兴趣项会保留 `probe_mode` / `challenge`，profile 页面点击“喜欢”会带 `surface="profile"`，不和 runtime inbox 的默认 probe 确认混在一起
-- `/api/profile-summary.active_insights` 在 popup、桌面 Web 和移动 Web 的画像/认知更新区只展示假设、置信度、证据与既有验证态，不再渲染「准 / 不准」按钮；需要处理的假设统一从对话 tab 的「待聊确认」进入 durable 卡片。兴趣/避雷 probe 仍是推荐流内独立探针，不属于洞察确认迁移范围
-- 收到 `avoidance.probe` runtime 事件后在 inbox 渲染避雷确认卡；「确认避雷 / 搁置避雷 / 不是雷点 / 多聊聊」分别以 `confirm / defer / reject / chat` 调 `/api/avoidance-probes/respond`，其中 `chat` 进入 `scope=avoidance_probe` 的 durable turn
-- 高级功能 Tab 在桌面 Web 与 side panel 保持同一信息架构：固定为「推荐增强 / 多模态处理 / 搜索词生成」三个 section。推荐增强的 P1/P2/P3 都是排序信号加权而非过滤，P1/P3 依赖图像 Embedding、P2 只需文本 Embedding，P1 每个极性反馈不足 8 条时安全 no-op；关闭开关会保留缓存和参数、回退原排序且不影响主流程，关键帧和弹幕目前仅作用于 B 站。多模态 section 明确区分图像 Embedding 能力与候选封面参与 LLM 评估，两者相互独立；模型 provider / 模型 / 凭据 / 探测仍在模型 Tab，调度 Tab 只保留调度项。两端显式加载和保存七个 discovery 字段，并在 discovery 快照展开后覆盖字段，关闭开关不会丢参数。
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM/embedding、B 站与通用 source 浏览器、十一来源 source 开关与 discovery 预算、Bangumi 公开用户名/五种合法条目类型/分支/节流/bootstrap 上限、Linux.do / V2EX / 微博登录态任务边界、数据目录、SQLite、调度、更新、候选池平台配比、探针与日志参数。Linux.do 卡片另展示 optional-login、五路 discovery、节流与 bootstrap 上限；Bangumi 凭据行明确显示公开只读 API。
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM/embedding、B 站与通用 source 浏览器、十一来源 source 开关与 discovery 预算、Bangumi 公开用户名/五种合法条目类型/分支/节流/bootstrap 上限、V2EX PAT/五种 discovery 分支/Node 与 Tab 配置、微博登录态 init 任务、数据目录、SQLite、调度、更新、候选池平台配比、探针与日志参数。Bangumi 凭据行明确显示“公开只读 API，无需 Cookie/token”，V2EX 凭据行明确显示“公开只读 API，PAT 可选”，微博凭据行明确显示“公开发现匿名，个人 init 需登录态任务”。
-- 成功读取 `/api/config` 后，popup API 会把配置快照写入 `chrome.storage.local["openbiliclaw.config_cache"]`。后端离线时设置页会读取缓存填表，并显示缓存时间；没有缓存时显示错误横条且不伪造默认值
-- 后端返回 `degraded=true` 时，设置页会在表单顶部展示降级原因和 blocking issues；模型实例/整链测试及模型发现属于无写入恢复控制面，在 degraded 状态仍使用当前草稿执行。保存响应正常为 `reloaded=true / restart_required=false`，同一进程立即解除降级；若旧后端或异常 bootstrap 返回 `restart_required=true`，插件仍用 warning tone 提示重启，并以重启后的权威 `/api/config` 为准，不把本地表单冒充已生效配置
-- 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`
-- 设置页保存配置时会保留后端已有的高级字段：`save_config()` 会串行化 scheduler speculation / auto-update 和 logging unmanaged cleanup 字段，避免 UI 修改常用项时把隐藏高级项写回默认值
-- 设置页“版本与更新”只展示后端更新状态并调用 `/api/update-status`、`/api/update/check`、`/api/update/apply` 的 backend target；插件版本行只读取本地 manifest 版本并链接 GitHub Releases。
-- 推荐 tab 现已改成“换一批”，会调用 `/api/recommendations/reshuffle` 直接从 discovery pool 秒级换出一批新推荐
-- `/api/recommendations` 的 `RecommendationOut` 携带 duration、互动、发布时间和 Bangumi `rating_score / rating_count / source_rank` 元信息。popup 对推荐和惊喜卡统一采用“真实值才显示”的规则；目录评分独立于 like/comment，精确时间优先、来源相对标签兜底。
-- 登录态来源只保留语义明确的发布时间：B 站 DOM 日期作为 `published_label`，小红书状态对象、抖音 `create_time`、知乎内容创建时间和 Reddit `created_utc` 作为 `published_at`；字段缺失时不写属性，不用任务执行/DOM 观察/互动时间猜测，也不额外请求详情页。回传后由后端统一规范化并进入候选池。
-- 推荐 tab 滚到底时会调用 `/api/recommendations/append` 继续往下续 10 条，不会把当前这一屏直接替换掉；首次渲染、切回推荐 tab 和追加完成后也会再检查一次底部距离，避免停在底部时没有新 scroll 事件导致续页卡住
-- 收到后台 `refresh.pool_updated` 时，推荐 tab 只更新池子数量、最近补货数量、方向提示和底部可换提示；移动 Web 空态也会用同一 runtime status 重新计算“还有多少可换 / 多少素材在整理”。不会调用 `/api/recommendations` 替换当前列表，用户已续页出来的历史内容会保留到下一次主动“换一批”或页面重新初始化。首次初始化推荐列表后会再读一次 `/api/runtime-status`，避免 `/api/recommendations` 从候选池 bootstrap 后仍显示 bootstrap 前库存
-- popup API 现在会统一规范化推荐项，追加出来的 `cover_url` 也会被收敛成可直接加载的 `https://` 地址；推荐点击 payload 会保留 `content_id / content_url / source_platform`，因此 YouTube 等跨源卡片打开后也会被后端记成对应来源，而不是落回 B 站 BV 号语义
-- 推荐、惊喜推荐和消息内封面图会通过 `popup-helpers.buildImageProxyPath()` 生成 `/api/image-proxy?url=...`，再用 `popup-backend-config.getBackendOrigin()` 拼成当前后端绝对地址；图片加载失败时保留已有 wrapper fallback，不让卡片布局塌缩
-- 内容库的收藏 / 稍后再看封面同样走当前后端图片代理；真实 403、网络错误或已缓存的失败图片都会从 DOM 移除并替换为可见 SVG 占位，插件不会保留浏览器破图图标，卡片打开按钮的可访问名称保持不变
-- 保存页刷新失败时保留最后一次成功的列表，错误行提供「重试加载」；全部 saved read/write/status/sync/task 请求都有 Abort timeout，且同一 deadline 从后端地址解析开始，覆盖初次设备会话交换、401 强制换票、受保护请求与响应解析，认证 fetch 接收同一 AbortSignal。每次成功加载会按 `sync_task_id` 去重恢复非终态 task，task→item ownership 把关联行显示为「同步中」并从单项 / 批量候选排除；side panel 重新可见时立即恢复查询，pagehide 清理 tracker。批量同步与重试加载会先捕获列表级焦点，重渲染后优先回到同一列表动作；卡片动作消失时再依次落到相邻卡片动作、列表动作、页面标题。「全部稍后看」按结果下标保留失败项，采用服务端 URL fallback `item_key` 更新状态，并把自动同步 task 纳入同一 ownership。coarse pointer 下推荐 / delight 保存按钮至少 44×44，sync 文案切换预留固定宽度。
-- `/api/recommendations/refresh` 仍保留为后台补货入口，用于继续往候选池里持续进货
-- popup 推荐卡片现在不会再把空 `expression / topic_label` 补成固定占位文案；后端预生成没完成时，这两块会直接隐藏
-- popup 的收藏 / 稍后再看 toggle 统一走 `createSavedToggleRegistry()`：同一 bvid 可以被多个按钮注册，任一按钮增删成功后所有可见按钮同步 `aria-pressed` / title / 文本；旧的懒加载 `GET /api/watch-later/{bvid}` / `GET /api/favorites/{bvid}` 结果如果发生在用户点击或收藏列表加载 / 移除之后会被忽略，避免状态回跳。收藏列表中移除条目也会反向同步惊喜横幅里的收藏按钮，推荐卡稍后再看也会与惊喜横幅稍后再看同步。注册表会在每次状态同步时剪除已脱离 DOM（`isConnected === false`）的按钮，并在推荐列表 / 惊喜横幅 `replaceChildren` 后调用 `pruneDetached()`，避免按钮随重渲染在注册表里无限堆积。
-- 亮色 side panel 视觉系统：顶部 hero + inline 状态徽标、胶囊 tab、统一卡片体系，整体更贴近 B 站内容产品气质
-- 推荐 tab：展示内容封面、标题、作者 / UP 主、`topic_label`、朋友式推荐文案，并通过“打开内容”跳转到 `content_url`；缺少 URL 时按 `source_platform` 构造安全 fallback，Bangumi Subject 固定使用 `bgm.tv/subject/<id>`
-- 如果某条内容暂时没有可用封面，卡片会回退到占位态，不影响换片和反馈
-- 推荐封面不再依赖原生 `loading="lazy"`，避免内部滚动容器续页时新卡片封面偶发空白
-- 底部提示区已升级为更明显的状态横条，会按成功 / 提示 / 错误切换对比度和状态点，减少“反馈发出去了但看不见”的感觉
-- 修复卡片误跳转：`喜欢` / `不喜欢` / `写一句` / 输入框 / 发送按钮不再冒泡触发视频打开
-- `喜欢` / `不喜欢` / `写一句` 都会调用 `/api/feedback`；桌面 Web 推荐卡片还提供「忽略」按钮（`feedback_type=dismiss`），走软移除语义：候选 `pool_status` 标 `feedbacked` 后不会再次进入发现池，但不会下调话题或作者权重。
-- 上述 recommendation feedback、推荐点击和保存页内容反馈都会携带 durable pending request/event ID；响应丢失时复用，只有服务端确认 accepted/成功才清理。API 对缺失、空白或超过 400 字符的 ID 返回 422 且零写入，前端不得在 retry 时临时换一个新 ID 绕过。
-- 推荐卡片里的 `写一句 -> 发出去` 现在会在按钮本地显示 `发送中... / 已发出 / 可重试` 三态，卡片底部也会同步写明这句是否真的发出去了
-- 页面会读取 `/api/runtime-status`，区分“未初始化 / 正在补货 / 推荐可用”三种状态；初始化刚完成但 `initialized` 标记尚未同步时，如果已有补货中或候选池信号，不再误提示用户重新执行 init
-- 桌面 Web 运行时看板的账号同步异常提示使用主题前景色与状态边界，深色主题下不再出现低对比度、难以辨认的错误文案
-- 桌面 Web 惊喜推荐的知乎、Reddit 等文字卡使用主题表面色和主题前景色，classic / 深色主题不再把文字压在相近色渐变上；普通无封面文字卡也复用同一套可读性规则
-- popup 打开期间现在会建立 `/api/runtime-stream` websocket 连接，底部提示条和池子状态会跟着后端事件实时变化
-- popup 底部提示区已升级成可展开动态卡：默认两行显示“现在在忙什么 / 最近一次关键变化”，点 `更多` 可以展开最近历史
-- 新增 `/api/activity-feed` 聚合接口，popup 会把认知更新、反馈记下了、换一批和补货结果收成同一块动态面板
-- “换一批 / 继续追加”现在优先直接消费 discovery pool 里预生成好的 `expression / topic_label`；换批只有在后端返回非空新批次时才替换当前卡片，空批次会保留正在看的推荐、停止本轮自动续页并复读 runtime 库存，避免“明明有库存却被清成空页”
-- 如果某条候选的预生成文案还没补好，卡片会先只展示标题、封面和 UP 信息，不会再显示统一占位话题或默认推荐理由
-- 后台补货继续异步进行，不会阻塞 popup 立刻换片
-- pool 状态摘要现在会区分“正在补货”“这轮找到了内容但可换库存没变”“刚补进 N 条”，不再把 refresh 进行中和上一轮净新增为 0 混成同一句
-- 插件 side panel、移动 Web 和桌面 Web 统一把 `pool_available_count` 当作真实可换数量；只要 `pool_pending_count>0`，摘要都会在真实可换数之外显示“另有 N 条素材 / 素材已抓到，会按可换库存缺口整理”，不会把待评估 / 待分类 / 待文案 / 不可打开的素材数写成“可换”。`pool_pending_eval_count` 和 `pool_evaluated_pending_count` 只作为诊断与整理状态使用。插件首次 `/runtime-status` 失败后若先收到权威 `pool_status` stream 事件，会立即把库存状态提升为 initialized 并显示事件中的真实计数，不再把非零库存隐藏成未知/零。
-- 推荐 tab 头部现已进一步压缩成双层内容型入口：第一层只保留 `For You`、标题和 `换一批`，第二层把池子状态收成三枚紧凑 chips，让第一张推荐卡更早进入首屏
-- 推荐 tab 现在还会在头部下方展示独立的“惊喜推荐”首屏卡位：popup 启动时会主动读取 `/api/delight/pending`，runtime stream 收到新的 `delight.candidate` 也会立刻刷新这张卡
-- 推荐 tab 会展示候选池摘要：
-  - `当前可换`
-  - `补货进展`
-  - `现在在忙`
-  - 三条状态仍然保留，但文案已收短成更适合 chips 的形式，例如 `还有 151 条可换 / 刚补进 6 条 / 这会儿先不补货`
-  - `当前可换` 只显示真实可立即换出的数量；待整理素材会进入“素材整理 / 现在在忙”语义，不会混进可换数字
-  - refresh 还在跑时，状态 chip 会优先显示 `正在补货`，不再先落成 `这轮还没补进`
-  - 点击 `换一批` 时，进行中的文案会直接进入“现在在忙” chip，而不是再额外挤出一条独立状态行
-- 推荐卡片现已进一步改成更偏编辑式的内容流：封面、标题、推荐理由和操作区的层级被重新拉开，头部信息不会再和首张内容卡抢视觉主角
-- 惊喜推荐卡会直接展示封面、hook、标题和惊喜理由，并提供 `看看 / 喜欢 / 不感兴趣 / 聊一聊 / 稍后看` 动作
-- `看看` 会打开对应内容并把这次点击保留成稳定的本地已处理态；`聊一聊` 会在卡内展开 composer，通过 durable `/api/chat/turns` 写入 `scope=delight` turn，不再强制把用户切去聊天 tab
-- `聊一聊` composer 在输入框失焦（焦点离开 composer）后会自动收起回操作按钮，省得展开后没法还原；已输入的草稿保留在 `chat_draft`，下次展开自动还原，正在发送的那条由 `sendInitiated` 守卫，点「发出去」时输入框先失焦也不会被收起误伤。桌面 Web `/web` 推荐卡 / 惊喜卡、移动 Web `/m` 惊喜卡同样支持失焦自动收起
-- 惊喜推荐内聊使用 per-delight `turns` 作为权威 UI 历史，提交后乐观追加用户气泡和 thinking 气泡，后端完成后就地替换为 AI 回复；`chat_reply` 仅保留为兼容 last reply 字段
-- 画像 tab：调用 `/api/profile-summary` 展示轻量人格画像、核心特质、深层需求、更完整的近期兴趣关键词，以及单独的“最近明显会避开”分组
-- 画像 tab 现在还会单独展示 `cognitive_style / motivational_drivers / current_phase` 三层认知摘要，让“这会儿的你”更像对用户的理解，而不是兴趣标签润色
-- 画像 tab 会额外展示“阿B 最近新记住了什么”，让用户能看到最近几次高置信度认知变化
-- 这块已经从单行列表升级为可展开认知卡片：默认只看一句总结，展开后可看“这对画像的影响 / 为什么这么判断 / 这次依据”
-- 评论类认知卡片会带上对应内容标题，例如“阿B 刚记下了你对《某条视频》的评论”，不再缺少上下文
-- 默认态现在固定显示：
-  - 结论
-  - `来自：《某条内容》` / `来自最近这轮聊天：…` / `基于最近主题：…` / `基于最近几条相关内容`
-  - 以及 `展开 / 收起 / 仅结论` 这类显式状态提示，不再让用户猜能不能点开
-- `/api/profile-summary` 现已支持 `limit / cursor` 分页参数，并返回 `has_more_cognition_updates / next_cognition_cursor`
-- popup 首屏先展示 3 条认知卡片；滚动到画像列表底部时会自动续页，底部也保留“加载更多 / 重试加载”按钮作为兜底
-- 推荐里提交 `dislike` 或 `说说原因` 后，这块会即时刷新，不再必须等到反馈批处理阈值满足
-- 聊天或推荐反馈成功后，如果 side panel 已经看过画像摘要，popup 会强制重拉 `/api/profile-summary`，让“阿B 最近新记住了什么”尽快同步到当前视图
-- 聊天 tab：调用 `/api/chat/turns` 创建 durable turn，后端先写入 `pending`，再后台生成回复；side panel reload 后会按 `session=popup` 读取完整 durable 对话流，再由共享 renderer 选出 `chat/hypothesis/confusion`，不能限定 `scope=chat`，否则确认卡会被隐藏
-- 聊天输入框内置多场景 placeholder 轮播，提示用户可以描述自己怎么看内容、喜欢 / 讨厌什么、近期观看行为、自我状态或注意力变化；输入框 focus 时暂停轮播，blur 且内容为空时恢复。底部「最近发生的事」活动栏在聊天 tab 继续可见；聊天历史区域使用 flex 填满活动栏与输入框之间的剩余空间并独立滚动，输入框固定在聊天区底部，窄屏下仍保留可用的历史消息区域。历史记录会在 hydrate、追加新消息、替换 thinking 占位和切回聊天 tab 时自动滚到最新 turn，避免用户打开已有对话后还要手动拖到底部
-- 惊喜推荐和兴趣猜测卡片内的 `聊一聊` 也会用 `scope=delight/probe` 写入 durable turn，回复完成后同步刷新对应卡片状态、画像摘要和最近动态；旧的 `/api/chat` 仍保留给兼容入口
-- durable chat turn 写入 SQLite `chat_turns`，不再依赖 DOM、JS 内存或 `sessionStorage` 保留主聊天历史；惊喜推荐保留 `localStorage` UI 草稿、展开态和 per-delight `turns` 作为本地兜底，权威回复状态以后端为准
-- 推荐、画像和聊天文案共享后端的 `ToneProfile`，基础风格是“老B友”，但会根据画像和近期反馈在信息密度、温度和梗感上动态调整
-- 推荐、内容库、画像、对话四个一级 tab 已统一为同一套浅色卡片语言；内容库内的稍后再看、收藏、历史记录三个子 tab 按需加载并保留各自滚动位置，历史按 30 天三分类 cursor 分页
+明确不再由 popup 承载：推荐、内容库、画像、对话、guided init、移动端二维码、调度开关、模型与完整后端配置。这些体验统一由桌面 Web `/web`（以及移动 Web `/m`）提供。
 
+文件边界保持简洁：
+
+- `popup-state.js`：来源顺序、名称、URL 识别与状态展示的纯函数。
+- `popup-api.js`：连接器需要的只读本地 API 与主应用 URL。
+- `popup.js`：页面编排、active-tab 识别、手动身份同步和 endpoint 保存。
+- `background/`：行为采集缓冲、Cookie / 登录态同步和各来源只读任务 dispatcher；popup 的瘦身不改变这些后台能力。
 ### 构建链路
 
 - 运行时脚本不再直接把 `tsc` 的 ESM 产物交给 Chrome
 - `scripts/build.mjs` 使用 `esbuild` 将各 content entry 和 `service-worker.ts` bundle 为可直接加载的单文件
+- popup 已改为自包含连接器，构建不再把 `web/shared/` 业务客户端模块复制进扩展；Firefox / Safari staging 只复制上述八个 popup 源文件与目标 manifest 资产
 - `tsc --emitDeclarationOnly` 继续负责类型声明产物
 - Chrome 的 `npm run build` 只清理 / 重建 `dist/`，Firefox 的 `npm run build:firefox` 只清理 / 重建 `dist-firefox/`；Firefox 仅执行 `typecheck` 而不再把声明文件写入 Chrome 输出，因此按任意顺序连续构建都不会删除或污染另一目标的现有产物。显式 `npm run clean` 仍会同时清理两者
 - 每个 target 的 bundle 完成后都会运行 manifest 资产预检，逐项确认后台脚本、content scripts 与 `web_accessible_resources` 文件真实存在；`dy-fetch-tap.js` 等动态注入资源缺失时构建立刻失败，不再留到浏览器任务执行时才报错。也可用 `npm run verify:assets` / `npm run verify:assets:firefox` 单独复查

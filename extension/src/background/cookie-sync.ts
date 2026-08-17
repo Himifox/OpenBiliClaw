@@ -731,6 +731,26 @@ export async function syncWeiboLoginStateToBackend(
 }
 
 /**
+ * Ask every browser-owned identity channel to refresh now.
+ *
+ * This is deliberately fire-and-forget: several sources perform a live
+ * validation and can take seconds, while the popup only needs an immediate ACK
+ * that the existing read-only sync jobs were scheduled. Their normal alarms
+ * and status endpoint remain the authority for eventual success or failure.
+ */
+export function requestIdentitySync(source: string = "popup-manual"): void {
+  void syncBilibiliCookieToBackend(source);
+  void syncDouyinCookieToBackend(source);
+  void syncXCookieToBackend(source);
+  void syncRedditCookieToBackend(source);
+  void syncXhsLoginStateToBackend(source);
+  void syncZhihuLoginStateToBackend(source);
+  void syncLinuxdoLoginStateToBackend(source);
+  void syncV2EXLoginStateToBackend(source);
+  void syncWeiboLoginStateToBackend(source);
+}
+
+/**
  * Handle backend runtime-stream events that explicitly ask the extension
  * to push the current site cookie now.
  */

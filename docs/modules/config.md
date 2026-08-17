@@ -135,7 +135,7 @@ auto_sync_enabled = false
 |----|------|--------|------|
 | `auto_sync_enabled` | bool | `false` | 是否在 OpenBiliClaw 本地收藏 / 稍后再看成功后创建对应平台账号写入任务。默认关闭；首次从插件、桌面 Web 或移动 Web 开启时必须确认外部账号修改警告。关闭不影响保存页手动同步。 |
 
-插件 side panel 设置、桌面 Web 和移动 Web 都从 `GET /api/config` 回读该值，并以 `PUT /api/config` 的 `{saved_sync: {auto_sync_enabled}}` 严格保存。卡片保存始终先写本地；平台失败不回滚本地成功。列表页移除只删除 OpenBiliClaw membership，不反向删除平台收藏、书签、Saved、播放列表或稍后观看记录。
+桌面 Web 和移动 Web 都从 `GET /api/config` 回读该值，并以 `PUT /api/config` 的 `{saved_sync: {auto_sync_enabled}}` 严格保存。卡片保存始终先写本地；平台失败不回滚本地成功。列表页移除只删除 OpenBiliClaw membership，不反向删除平台收藏、书签、Saved、播放列表或稍后观看记录。
 
 六平台授权 E2E 同样从 `auto_sync_enabled = false` 开始并在退出时恢复原值。手动 favorite / watch-later 不修改该开关；自动同步用例只有在用户对 exact platform、action、public content ID 和 expected target 明确同意后才临时开启。配置同意不能替代当次 `allow_state_changing=true` 精确授权。
 
@@ -372,7 +372,7 @@ multimodal_enabled = true   # 封面 image-only 向量；与文本同一空间
 
 #### 配置页服务探测 API（v0.3.114+）
 
-桌面 Web `/web` 与插件 side panel 都可测试单个聊天实例、整条默认链和 embedding。插件可直接新建、编辑、删除实例并调整全局 `default_chain`；模块自定义链在插件中只读展示，需进入 PC Web 编辑。探测走一个**无写入**接口，不会保存 `config.toml`，也不会触发运行时热重载；guided init 运行期间仍可调用，不受 `409 init_running` 写端门控影响。真正保存草稿的 `PUT /api/config` 在 init 期间仍被禁止。
+桌面 Web `/web` 可测试单个聊天实例、整条默认链和 embedding，也可新建、编辑、删除实例并调整全局 `default_chain`。浏览器插件只保留后端端点与远程设备配对，不再承载模型配置。探测走一个**无写入**接口，不会保存 `config.toml`，也不会触发运行时热重载；guided init 运行期间仍可调用，不受 `409 init_running` 写端门控影响。真正保存草稿的 `PUT /api/config` 在 init 期间仍被禁止。
 
 ```http
 POST /api/config/probe-service
@@ -582,7 +582,7 @@ daemon，保留当前 v2 文件和自动备份，再由操作者显式把导出�
 >
 > **只有「从没写过」才吃新默认值**：`_build_network_config` 按 `mode` **键是否存在**判定，不看解析后的值。`config.toml` 里显式写了 `mode = "direct"` 的照旧直连，`OPENBILICLAW_NETWORK_MODE=direct` 同理（env override 注入的是同一张表，也算显式）。因此凡是通过设置页保存过配置的用户，磁盘上已有显式 `mode`，升级后行为一律不变；受益的是全新安装与从未配置过 `[network]` 的老配置。非法值（未知模式、`custom` 但 `proxy` 为空）仍然回退 `direct` 而不是新默认值——用户确实写了东西，不该因为写错就悄悄开始继承环境代理。
 >
-> 旧配置只有非空 `proxy` 而没有 `mode` 时自动迁移为 `custom`；空旧配置取默认值 `system`。**API 侧同一套判定**：`PUT /api/config` 与 `POST /api/config/probe-service` 收到只带 `proxy`、不带 `mode` 的 payload（旧版 UI、第三方客户端）时，与磁盘上缺 `mode` 键走同一条路——非空 `proxy` 仍是 `custom`，清空 `proxy` 则落到 `system` 而不是 `direct`；显式送了 `mode` 的一律照送的值处理。保存时校验模式、协议与主机，`custom` 缺地址或非法值经 `PUT /api/config` 返回 400、不落盘。桌面 Web 与扩展 popup 都提供模式选择、地址输入和按当前模式真实探测；CLI `config-show` 分别显示模式与地址；移动 Web 无设置页。
+> 旧配置只有非空 `proxy` 而没有 `mode` 时自动迁移为 `custom`；空旧配置取默认值 `system`。**API 侧同一套判定**：`PUT /api/config` 与 `POST /api/config/probe-service` 收到只带 `proxy`、不带 `mode` 的 payload（旧版 UI、第三方客户端）时，与磁盘上缺 `mode` 键走同一条路——非空 `proxy` 仍是 `custom`，清空 `proxy` 则落到 `system` 而不是 `direct`；显式送了 `mode` 的一律照送的值处理。保存时校验模式、协议与主机，`custom` 缺地址或非法值经 `PUT /api/config` 返回 400、不落盘。桌面 Web 提供模式选择、地址输入和按当前模式真实探测；CLI `config-show` 分别显示模式与地址；移动 Web 与浏览器插件无此设置面板。
 
 ### `[sources.browser]`
 
@@ -715,7 +715,7 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `false` | 是否让知乎参与候选池配比和后台 discovery。默认关闭，必须显式 opt-in；关闭后 `ZhihuDiscoveryProducer` 不入队任务，`pool_source_shares.zhihu` 配额从有效配比中剔除 |
-| `source_modes` | list[str] | `["search", "hot", "feed", "creator", "related"]` | 后台和 `openbiliclaw discover --source zhihu` 允许调度的知乎 discovery 分支。插件 side panel 与桌面 Web 配置页都提供五个显式勾选项。`search` 使用统一关键词 planner；`hot` 拉热榜；`feed` 拉首页推荐；`creator` 优先用最近任务结果里的作者主页作种子，没有历史种子时使用本轮 search / hot / feed 返回的作者页；`related` 优先用最近知乎候选 URL，没有历史种子时使用本轮已返回内容 URL 作相关扩展种子 |
+| `source_modes` | list[str] | `["search", "hot", "feed", "creator", "related"]` | 后台和 `openbiliclaw discover --source zhihu` 允许调度的知乎 discovery 分支。桌面 Web 配置页提供五个显式勾选项。`search` 使用统一关键词 planner；`hot` 拉热榜；`feed` 拉首页推荐；`creator` 优先用最近任务结果里的作者主页作种子，没有历史种子时使用本轮 search / hot / feed 返回的作者页；`related` 优先用最近知乎候选 URL，没有历史种子时使用本轮已返回内容 URL 作相关扩展种子 |
 | `daily_search_budget` | int | `0` | 知乎搜索 discovery 每日任务预算；`0` 表示不设每日上限，本轮关键词数由统一关键词 planner / fallback 画像兴趣和平台缺口决定 |
 | `daily_hot_budget` | int | `0` | 知乎热榜 discovery 每日任务预算；`0` 表示不设每日上限 |
 | `daily_feed_budget` | int | `0` | 知乎首页推荐 discovery 每日任务预算；`0` 表示不设每日上限 |
@@ -781,7 +781,7 @@ Linux.do 通过浏览器扩展在真实 `linux.do` task tab 内执行同源只�
 
 #### 配置页来源状态契约
 
-插件 side panel 与桌面 Web `/web` 的平台源配置页统一读取 `GET /api/sources/status`。这个端点是**纯本地读取**：不会访问任何上游平台，也不会运行 `rdt` / `opencli` 命令。页面可见时每 30 秒刷新一次，但请求只到 OpenBiliClaw 本地后端；真实平台请求仅由用户显式初始化、发现、诊断任务或已启用的后台 producer 发起。
+插件连接器与桌面 Web `/web` 的平台源配置页统一读取 `GET /api/sources/status`。这个端点是**纯本地读取**：不会访问任何上游平台，也不会运行 `rdt` / `opencli` 命令。插件在打开或手动检查时读取，桌面页面可见时每 30 秒刷新一次；请求都只到 OpenBiliClaw 本地后端，真实平台请求仅由用户显式初始化、发现、诊断任务或已启用的后台 producer 发起。
 
 桌面 Web 的来源卡片是设置面板 DOM 的结构边界：Linux.do、V2EX 及后续来源必须作为来源列表中的同级节点闭合，不能嵌套或包住来源总览、调度、模型等其它设置面板。否则浏览器会按容错规则重排后续节点，表现为配置页标签仍在但面板内容空白；该结构由 `tests/test_desktop_web_linuxdo_settings.py` 固定检查。
 ### `[sources.v2ex]`
@@ -929,7 +929,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 #### Web 与插件设置页的「高级功能」
 
-桌面 Web 与浏览器插件 side panel 的设置页都提供独立的「高级功能」Tab：桌面端共 7 个 Tab，插件端共 6 个 Tab；两端固定使用同一套三个 section，字段语义、默认值和保存行为保持一致。
+桌面 Web 设置页提供独立的「高级功能」Tab，并固定使用三个 section；浏览器插件不再复制这套后端配置表单。
 
 - **推荐增强**：包含 P1 用户视觉画像、P2 弹幕语义、P3 视频关键帧的开关和预热参数。三者都是排序信号加权，不是过滤；P1/P3 依赖图像 Embedding，P2 只需文本 Embedding。P1 每个极性反馈不足 8 条时安全 no-op。关闭任一开关会保留缓存与参数并回退到原排序，不影响现有主流程；关键帧和弹幕目前仅作用于 B 站。
 - **多模态处理**：独立管理「图像 Embedding 能力」和「候选封面参与 LLM 评估」。前者是 P1/P3 的依赖，后者不会改变 P1/P3；Embedding provider、模型、凭据和探测仍在模型 Tab。
@@ -1014,7 +1014,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 #### `keyword_generation_mode`（搜索词生成模式，UI/API 派生便利层）
 
-配置页（**桌面 Web `/web` 与插件 popup 设置区**）把 `inspiration_search_enabled` / `inspiration_replace_merged_keywords` 两个布尔收成**单一「搜索词生成模式」下拉**（经典 / 混合 / 灵感）。这**不是** `DiscoveryConfig` 新字段——`config.toml` 仍只存这两个布尔（单一真相源）；`keyword_generation_mode` 只是 API 层的派生便利：`DiscoveryConfigOut` 读出它、`PUT /api/config` 把它翻译回两布尔，两端 UI 只见一个下拉。
+桌面 Web `/web` 配置页把 `inspiration_search_enabled` / `inspiration_replace_merged_keywords` 两个布尔收成**单一「搜索词生成模式」下拉**（经典 / 混合 / 灵感）。这**不是** `DiscoveryConfig` 新字段——`config.toml` 仍只存这两个布尔（单一真相源）；`keyword_generation_mode` 只是 API 层的派生便利：`DiscoveryConfigOut` 读出它、`PUT /api/config` 把它翻译回两布尔。
 
 新配置及缺少该字段的 UI/API 回退默认选择 **混合 / `hybrid`**；已有配置若显式保存为经典或灵感则继续尊重原值，不做迁移覆盖。
 

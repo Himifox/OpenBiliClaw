@@ -14,7 +14,7 @@
 - [5. Guided Init 和画像初始化](#5-guided-init-和画像初始化)
 - [6. Discover 接入](#6-discover-接入)
 - [6.5 Eval / 推荐链路接入](#65-eval--推荐链路接入)
-- [7. 推荐卡三端适配](#7-推荐卡三端适配)
+- [7. 推荐卡双端适配](#7-推荐卡双端适配)
 - [8. 测试清单](#8-测试清单)
 - [9. 真实端到端验证](#9-真实端到端验证)
 - [10. 文档和发布](#10-文档和发布)
@@ -32,7 +32,7 @@
 - guided init 和画像初始化
 - formal discover 调度
 - 配置页和来源比例
-- 桌面 Web / 移动 Web / 插件推荐卡
+- 桌面 Web / 移动 Web 推荐卡，以及插件连接器的来源识别 / 状态摘要
 - LLM eval / 推荐链路中的候选兼容
 - 单元测试和真实登录态 E2E
 - 文档与 release-readiness；版本、tag、发布和上游写动作另需明确授权
@@ -44,8 +44,8 @@
 | 登录态浏览器取数 | `extension/src/background/*-task-dispatcher.ts`、`extension/src/content/*/task-executor.ts`、`src/openbiliclaw/sources/*_tasks.py` |
 | 服务端 / 直连 discover | `src/openbiliclaw/discovery/strategies/x.py`、`src/openbiliclaw/discovery/strategies/douyin_direct.py`、`src/openbiliclaw/runtime/bilibili_producer.py` |
 | 初始化画像 | `src/openbiliclaw/cli.py` 中 B 站 / XHS / 抖音 / YouTube / X / 知乎路径 |
-| 配置页 | `src/openbiliclaw/config.py`、`src/openbiliclaw/api/app.py`、`extension/popup/*`、`src/openbiliclaw/web/desktop/assets/js/app.js` |
-| 纯文本推荐卡 | X / 知乎三端推荐卡处理 |
+| 配置页 | `src/openbiliclaw/config.py`、`src/openbiliclaw/api/app.py`、`src/openbiliclaw/web/desktop/assets/js/app.js` |
+| 纯文本推荐卡 | X / 知乎桌面与移动推荐卡处理 |
 
 ## Skill 执行协议
 
@@ -55,7 +55,7 @@
 2. **历史取证门**：按能力分别选择前例；每项至少记录一个可比的首次接入和一个后续修复，确实没有本地前例则记录检索范围与 `no precedent found`，不能静默跳过。检查 `git log --all`、PR/issue、当前代码与可用的本地 Codex session。session 只提供线索，任何结论都要回到当前代码、测试、提交或脱敏真站证据；不得复制 Cookie、token、账号标识或其它秘密。
 3. **来源契约门**：动代码前填写 `docs/platform-source-contract.example.toml` 的副本，冻结 slug/alias、身份、schema、transport、auth、discover、init、incremental、surface、E2E 和排除项，并从 `docs/platform-source-acceptance.example.md` 建立验收 ledger。用项目 Python 3.11+（下文 `$SOURCE_SKILL_PYTHON`）运行 audit 生成注册缺口基线；一个尚未写入 canonical registry 的全新 slug 应得到 JSON `MISSING`，不是 contract error。它只证明接线痕迹，不证明语义或 E2E。audit 的普通实现 `MISSING` 映射 ledger `FAIL`；明确指出“必须先扩共享契约才能安全开始来源实现”的 prerequisite `MISSING` 映射 `BLOCKED`。`MANUAL` 在补证据前映射 `NOT_RUN`，`N/A` 仍需 contract exclusion 与测试，不能把 audit `PASS` 直接当整门完成。audit 只确认 exclusion nodeid 可解析；验收报告还必须记录这些 nodeid 实际执行为 PASS，skip/xfail/未执行都不是 N/A 证据。
 4. **上游 spike 门**：至少保存一组脱敏真实 envelope 和一个反例，验证内容类型、ID、分页/cursor、终止证据、限流和错误体。登录凭据做完整态 / 剥登录字段游客态对照；服务端、子进程和浏览器 fallback 分开证明。拿不到稳定只读路径时停止，不要用臆造 fixture 进入实现。
-5. **纵向实现门**：按「canonical registry / contract → transport / normalizer → task / event / bootstrap → formal discover / eval → config / status / init → 三端 surface → docs / release-readiness」逐层落地，每层先写会失败的契约测试，再接下一层。
+5. **纵向实现门**：按「canonical registry / contract → transport / normalizer → task / event / bootstrap → formal discover / eval → config / status / init → 桌面/移动 surface + 插件连接器状态 → docs / release-readiness」逐层落地，每层先写会失败的契约测试，再接下一层。
 6. **漏项审查门**：重新运行 audit，按参考平台能力做 `rg -l '<reference-slug>'` 与 `<slug>` 的差集分类，并让独立 reviewer 只看原始契约、diff、测试和真实 artifact 做遗漏审查；不要把预期答案或已知怀疑喂给 reviewer。
 7. **验收门**：交付表逐项给出代码、单测、构建产物、安全真机 E2E、需要额外授权的状态变更 E2E、明确排除和阻塞。只有所有 `required` 行都是 `PASS` 才能写 `complete`；已有界、安全、可用的切片但 required 行仍有 `FAIL/NOT_RUN` 时写 `incremental only`；因缺真实上游、账号/浏览器、必要授权、共享架构前置能力或其它安全前提而无法继续时写 `blocked`。文档与 release-readiness 必查，但 version/tag/push/marketplace 等发布动作只有用户明确要求时才执行。
 
@@ -63,7 +63,7 @@
 
 不要复制“最像的平台”整套实现。一个新来源往往同时借鉴多种前例：匿名 API 可参考 Bangumi/YouTube，optional credential 可参考 Bangumi，服务端 CLI 可参考 X/Reddit，浏览器 bootstrap 可参考 XHS/抖音/YouTube/知乎/Reddit，纯文本卡可参考 X/知乎。契约中每项能力独立选择前例。
 
-术语要分清：本指南的“四个产品面”只指 setup、桌面、移动、extension popup/side panel；contract 的八项 `surfaces` 还把 CLI、source status、credentials 与 recommendation 作为横切交付能力分别审计。`credentials=true` 表示项目存在该来源的凭据能力，不代表每个产品面都有编辑表单；移动端凭据管理当前是全局有意排除，必须在验收 ledger 中单列，不能与 mobile recommendation/status 混为一个布尔值。
+术语要分清：完整业务产品面是 setup、桌面和移动；extension popup/side panel 是连接器，只承载当前来源识别、来源状态、身份同步和后端连接。contract 的八项 `surfaces` 还把 CLI、source status、credentials 与 recommendation 作为横切交付能力分别审计。`credentials=true` 表示项目存在该来源的凭据能力，不代表每个产品面都有编辑表单；移动端凭据管理与插件完整配置当前都是全局有意排除，必须在验收 ledger 中单列，不能与 recommendation/status 混为一个布尔值。
 
 新来源至少逐项审计这些中央注册点；能从 canonical registry 派生的不要再手抄，不能派生的要补集合相等或参数化测试：
 
@@ -98,7 +98,7 @@
 - 每个分支额度：按真实来源分支独立定义，不要因为多个分支最后都映射成 `favorite` 就共享上限。
 - 状态变更边界：哪些 E2E 动作只读 / 安全，哪些会改变账号状态，必须提前写清楚。
 - 安全动作命名只能采用 audit 的精确只读语法：`snapshot / scroll / search / hot / related / feed / ranked / latest`，`read-identity`，`read-public-{collection,feed,profile,item,page}`，`fetch-public-{collection,feed,profile,item,page,search,ranked,latest}`，`navigate-public-{item,page,profile}`，`open-public-link / copy-public-link / open-share-panel / close-share-panel`。每项必须在 `[e2e.safe_assertions]` 精确声明 `upstream-state-unchanged`，自由文本 postcondition 只记录可观察证据、不能作为机器授权。未知、非 ASCII 或平台专属动作默认归入 mutating；`watch-later`、星标、转发、中文「点赞」等不能靠避开英文 denylist 获得默认授权。
-- 三端内容卡形态：有封面、无封面文字、长文本、外链、评论 / 帖子 / 回答等特殊类型。
+- 桌面 / 移动内容卡形态：有封面、无封面文字、长文本、外链、评论 / 帖子 / 回答等特殊类型。
 - 统一字段和文案：跨平台作者写 `author_name`，稳定 ID 写通用内容 ID；`UP主`、`BV号` 等平台专属术语只能在对应平台展示。
 - 网络所有权：注明请求实际由项目 HTTP client、第三方子进程还是浏览器发出；配置提示只能推荐真正影响这条传输路径的代理设置。
 - 完整性与终态：分别定义 `ok / empty / degraded / login_required / rate_limited / failed`，`scope_complete` 的证明，以及 partial rows、cursor、retraction 如何处理。只有确实观察到合法空响应才可写 `empty`。
@@ -237,7 +237,7 @@ body  {kind: "cookie" | "token" | "login_state", value, source}
 
 ### 0.5 表单描述符：`GET /api/sources/credentials` 的 `form`
 
-前端不该知道「小红书能不能粘贴 cookie」。新平台在 `CREDENTIAL_SPECS` 里补 `form_*` 字段，端点会把它投影成 `form` 描述符下发，三端照着渲染：
+前端不该知道「小红书能不能粘贴 cookie」。新平台在 `CREDENTIAL_SPECS` 里补 `form_*` 字段，端点会把它投影成 `form` 描述符下发，完整配置界面照着渲染：
 
 | 字段 | 回答什么 |
 | --- | --- |
@@ -252,24 +252,23 @@ body  {kind: "cookie" | "token" | "login_state", value, source}
 1. **描述符是派生的，不是另写一份。** `required_keys` 直接来自 `CREDENTIAL_SPECS` 的 `required_keys` / `any_of_keys`，`build_credential_form()` 只做投影。表单说要三个 cookie、校验器只要一个，就是 D6 的漂移换个楼层重演一遍。
 2. **`required_keys_mode` 不能省。** 抖音三个 session cookie 是**任选其一**，把它们平铺成 `required_keys` 会让 UI 声称校验器要求它其实不要的东西。spec 初稿的字段表里只有 `required_keys`，实现时发现表达不了，所以补了 mode——描述符宁可多一个字段，也不许说谎。
 3. **`extension_only` 是绑定的。** 后端一个字节的小红书 / 知乎 cookie 都不存，所以这两个平台**不许渲染出可粘贴的输入框**。给一个能填的框，是在骗用户往虚空里打字。它们仍然有 `verify` 和 `open_login_window` 两个动作——「去浏览器登录」才是这两个平台唯一有效的修法。
-4. **动作即能力，没有的不许挂。** 通用描述符目前只有 `verify` / `copy` / `open_login_window`。`clear` 只有在后端存在明确删除语义后才能下发；Bangumi 已通过 `PUT /api/config` 的 `access_token: ""` 和三端清除控件实现，但尚未成为通用 descriptor action。新来源若承诺清除，必须先实现端点、清理验证 / rejected 缓存并补跨端契约测试；否则不显示按钮。
+4. **动作即能力，没有的不许挂。** 通用描述符目前只有 `verify` / `copy` / `open_login_window`。`clear` 只有在后端存在明确删除语义后才能下发；Bangumi 已通过 `PUT /api/config` 的 `access_token: ""` 和配置界面清除控件实现，但尚未成为通用 descriptor action。新来源若承诺清除，必须先实现端点、清理验证 / rejected 缓存并补跨端契约测试；否则不显示按钮。
 
-`summary`（凭据行那句话）同样由后端下发。小红书那句「已保存，但不代表账号登录」以前是桌面页里的一个平台特判，于是只有桌面页说得出这句话，插件和引导页都不知道。
+`summary`（凭据行那句话）同样由后端下发。小红书那句「已保存，但不代表账号登录」以前是桌面页里的一个平台特判，曾导致各前端展示结论不一致。
 
-### 0.6 三端共享渲染模块 `web/shared/source-status.js`
+### 0.6 Web 端共享渲染与插件连接器状态
 
-状态 → 文案/色调的表**只有一份**，在 `src/openbiliclaw/web/shared/source-status.js`。三个前端都加载它：
+完整 Web 界面的状态 → 文案/色调表在 `src/openbiliclaw/web/shared/source-status.js`，由两个 Web 入口加载：
 
 | 前端 | 加载方式 |
 | --- | --- |
 | 桌面 Web | `<script src="/shared/source-status.js" defer>`，在 `app.js` 之前 |
-| 插件 side panel | `<script src="shared/source-status.js">`（classic，在 `popup.js` 模块之前）；文件由 `extension/scripts/build.mjs` 在每次 build 时复制进包 |
 | setup 引导页 | `<script src="/shared/source-status.js">`，在内联脚本之前 |
 
 几个要点：
 
 - **`/shared` 是独立 mount。** `/web` 挂的是 `web/desktop/`，所以 `web/shared/` 下的文件从 `/web/shared/…` 取不到（只能从 `/m/shared/…`，那是移动端 mount）。跨端共享的资源不该走某一端专属的 URL。
-- **插件必须用复制，不能用 HTTP 拉。** MV3 默认 CSP `script-src 'self'` 禁止从后端加载脚本，所以同一个源文件有两条投递路径：HTTP（桌面 / 引导页）和 build 期复制（插件）。复制产物 `extension/popup/shared/` 已 gitignore——**不要提交它**，一提交它就变成第四份手抄副本。
+- **插件连接器不再复制业务 renderer。** `extension/popup/popup-state.js` 只保留 11 来源的 URL 识别和紧凑状态投影；新增来源时必须同步更新其 `SOURCE_ORDER` / label / host rule，并用集合测试对齐 canonical family。完整凭据表单、修复动作和推荐卡仍只在 Web 产品面实现。
 - **共享的是本枚举，不是所有相邻枚举。** 判据是「这张表的键是不是 `/api/sources/*` 发出来的字段值」。saved-sync 的任务状态表（`saved-sync-core.js` 等 6 处）跟本枚举共用 `login_required` / `rate_limited` 两个**拼写**，但回答的是「这一条收藏同步成功没有」，不是「这个源接不接得上」，所以不合并。引导页的 `INIT_REASON_TEXT` 同理（那是初始化前置条件枚举）。
 - **依赖是硬的。** 模块缺失会让整个页面挂掉（与既有的 `saved-sync-core.js` 一致）。所以任何自建 HTTP stub 的 E2E 测试都必须加 `/shared/` 路由，否则 404 会以「某个不相关的测试超时」的形式暴露出来——`tests/test_desktop_web_autoload_margin_e2e.py` 等三个 stub 已加。
 
@@ -438,11 +437,9 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 - `src/openbiliclaw/config.py`
 - `config.example.toml`
 - `src/openbiliclaw/api/app.py` 的 `/api/config` GET/PUT
-- `extension/popup/popup.html`
-- `extension/popup/popup.js`
-- `extension/popup/popup-helpers.js`
 - `src/openbiliclaw/web/desktop/index.html`
 - `src/openbiliclaw/web/desktop/assets/js/app.js`
+- `extension/popup/popup-state.js`（仅来源识别 / 状态摘要，不放完整配置表单）
 - `/setup/` 和移动端 view-model 中的初始化来源列表
 - `docs/modules/config.md`
 
@@ -459,7 +456,7 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 
 配置页验收不要只看一个端：
 
-- 插件 side panel 和 PC Web 都要能保存平台开关、source modes、每个分支预算、候选池 share。
+- PC Web 要能保存平台开关、source modes、每个分支预算、候选池 share；插件连接器只读来源状态，不保存这些业务配置。
 - `/api/config` GET/PUT 要 round-trip 新字段，旧 `config.toml` 缺字段时按默认值回填。
 - 不要假设 provider registry 会自动生成所有 API 字段。`SourcesStatusResponse`、`SourcesCredentialsResponse`、`SourcesConfigOut` 与 `GET /api/sources/credentials` 当前都可能有手写平台字段/组装；contract audit 必须比较 canonical family 与 provider/verify/spec/model/endpoint/shared `SOURCE_KEYS`/init roster/source policy 的集合，能力例外只来自契约。
 - 局部更新语义必须一致：字段省略 = 保留已存值，空字符串 = 用户显式清除，掩码回显 = 不覆盖。表单需要分别记录「用户是否触碰」和「prefill 是否成功」；pending / failed prefill 留下的空框绝不能清掉配置。
@@ -475,16 +472,15 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 
 - CLI：`--yes-<slug>` / `--no-<slug>`，必要时加分支上限参数。
 - Desktop `/setup/` 来源选择。
-- 插件 guided-init checklist。
 - API init models、init status 和进度展示。
 
 规则：
 
 - 新可选平台默认 opt-in 提示，不阻塞 B 站或其他已选平台初始化。
-- 来源准入和账号解析只由后端拥有。CLI / setup / 桌面 / 插件不得在发请求前复制「有无用户名 / 令牌 / 登录」判断；这种前端 guard 看不到扩展身份、已保存配置等后端 fallback，会让合法 payload 的实际请求数变成 0。
+- 来源准入和账号解析只由后端拥有。CLI / setup / 桌面不得在发请求前复制「有无用户名 / 令牌 / 登录」判断；这种前端 guard 看不到扩展身份、已保存配置等后端 fallback，会让合法 payload 的实际请求数变成 0。
 - 如果平台能在已登录浏览器内稳定读取个人行为信号，应优先实现 `bootstrap_events` / `bootstrap_profile`：明确每个 scope、默认上限（当前强信号平台通常每 scope 300）、事件映射（例如 saved → `favorite`、upvoted/liked → `like`、subscribed/following → `follow`），并允许该平台作为唯一初始化来源，只要真实拉到至少一条信号。
 - 同时声明 init 之后如何更新：`incremental` 必须接第 2.3 节的共享 scheduler/admission/staged ingestion；`init-and-on-demand` / `on-demand` / `init-only` 要在配置、状态和文档中可见并有不会后台入队的测试。不能首版只做 init，后来才发现画像永远不刷新。
-- 如果平台只启用后续 discovery、不在 init 阶段产生个人行为信号，必须在 CLI / API / 插件 / Web UI 中标成 discovery-only，且不能作为唯一画像初始化来源；只选择这类来源时应给出明确错误（例如 `no_profile_signal_sources`），不要等到最后落成 `empty_signals`。
+- 如果平台只启用后续 discovery、不在 init 阶段产生个人行为信号，必须在 CLI / API / Web UI 中标成 discovery-only，且不能作为唯一画像初始化来源；只选择这类来源时应给出明确错误（例如 `no_profile_signal_sources`），不要等到最后落成 `empty_signals`。
 - 平台登录缺失只影响该平台，不应让其他来源无法初始化。
 - 新增来源后审计既有 B 站专属 gate：画像重建、CLI 输出和初始化校验不得因为历史上只有 B 站就继续要求 B 站登录。
 - init 任务结果必须绑定当前 init run，避免扩展延迟结果误写 memory。
@@ -555,13 +551,12 @@ CLI：
 - admission 后推荐 API 返回的 item 保留 `source_platform` / `content_url` / `body_text` / `content_type`。
 - 推荐卡的「去看看 / 收藏 / 稍后再看 / 不感兴趣 / 聊一聊」仍能对非 B 站来源发正确 payload。
 
-## 7. 推荐卡三端适配
+## 7. 推荐卡双端适配
 
-三端都要补齐：
+桌面与移动两端都要补齐：
 
 - 桌面 Web：`src/openbiliclaw/web/desktop/assets/js/app.js` 和 CSS。
 - 移动 Web：`src/openbiliclaw/web/js/view-models.js` 和 CSS。
-- 插件 side panel：`extension/popup/popup-helpers.js`、`popup.html`、`popup.js`。
 
 检查项：
 
@@ -572,11 +567,11 @@ CLI：
 - 非 B 站内容不会误构造 B 站 URL。
 - 稍后再看、收藏、忽略、不感兴趣、聊一聊等动作仍可用。
 - 长标题、长摘要、无封面卡片不会遮挡按钮。
-- 桌面、移动、插件侧栏都做截图或视觉检查。
+- 桌面、移动都做截图或视觉检查；插件只检查连接器中的来源名称与状态。
 - 推荐页平台过滤 / source badge / source label 要包含新平台。
-- 四个产品面（setup、桌面、移动、插件）逐一实现，或在规格中逐面写明有意排除、理由和契约测试；「这个场景大概用不到」不算完成。
-- engagement 契约包含 `view / like / favorite / comment / share / danmaku` 六项，但当前展示链路尚未补齐六项：`DiscoveredContent` 有六个字段，`RecommendationOut` 与移动 / 桌面两个 `recommendationStats()` 目前只有 `view / like / favorite / comment / danmaku`，没有 `share_count` / `🔁 share`（缺口见 `docs/plans/2026-07-07-engagement-stats-completeness-spec.md`）；插件侧栏也要单独核对。契约里声明为「结构性缺失」的字段不渲染、不占位；声明可映射的字段要用真实候选验证实际已透传到当前 DTO 与卡片，未落地的 `share` 不得宣称端到端完成。
-- 如果源主要是文字内容，要确认 text-card 在 PC、移动、插件三端都不是断图 fallback，按钮不会被正文遮挡。
+- 三个完整产品面（setup、桌面、移动）逐一实现，插件连接器另行检查来源识别 / 状态；有意排除必须写明理由和契约测试，「这个场景大概用不到」不算完成。
+- engagement 契约包含 `view / like / favorite / comment / share / danmaku` 六项，但当前展示链路尚未补齐六项：`DiscoveredContent` 有六个字段，`RecommendationOut` 与移动 / 桌面两个 `recommendationStats()` 目前只有 `view / like / favorite / comment / danmaku`，没有 `share_count` / `🔁 share`（缺口见 `docs/plans/2026-07-07-engagement-stats-completeness-spec.md`）。契约里声明为「结构性缺失」的字段不渲染、不占位；声明可映射的字段要用真实候选验证实际已透传到当前 DTO 与卡片，未落地的 `share` 不得宣称端到端完成。
+- 如果源主要是文字内容，要确认 text-card 在 PC、移动两端都不是断图 fallback，按钮不会被正文遮挡。
 - 封面链路要显式决定：走后端 `/api/image-proxy` 缓存代理，还是浏览器直连。走代理必须把封面 CDN 域名加进 `runtime/image_cache.py` 的 `ALLOWED_IMAGE_HOST_SUFFIXES`（否则一律 403 Domain not in whitelist）；CN CDN 域名还要同时加 `_DIRECT_FETCH_HOST_SUFFIXES` 绕过系统代理（风控会封代理出口 IP，抖音 / B 站 / XHS 都踩过）。这个 suffix 表同时是 SSRF 边界：contract 只接受具体 DNS host 并拒绝 wildcard/public-suffix/local/IP/已知 wildcard-DNS，但静态语法仍不能证明安全；每次请求和每个 redirect hop 还必须解析并拒绝 loopback/private/link-local/reserved 地址，记录 DNS rebinding/地址固定策略。没有这份 runtime 证据时 `media.image-network-boundary` 保持 `NOT_RUN/BLOCKED`，不能凭 allow-list 接线 PASS 宣称安全。浏览器直连则要先确认该 CDN 无防盗链 / referer 限制。
 - 移动 Web 的「去看看」会尝试拉起平台原生 App：`src/openbiliclaw/web/js/app-launch.js` 的 `buildAppDeepLink(url)` 按内容 URL 的 host / path 分支解析并返回 URL scheme。新平台有可靠官方 scheme 就加对应解析分支；没有就返回空串，由 `openContentUrl()` 走浏览器 fallback，不要硬造 scheme。
 
@@ -671,8 +666,8 @@ npm run package:firefox:only -- --archive-version <extension-version>
 4. 跑 `fetch-<slug>` 或 discover smoke，看分支计数、cap、错误原因。
 5. 每个 discover mode 跑一次，确认候选入 `discovery_candidates`，或因合理 reason 停止。
 6. 跑 `openbiliclaw discover --source <slug>`，确认正式 producer 通。
-7. 在插件配置页和桌面 Web 配置页保存 source modes / source share，回读 `/api/config`。
-8. 桌面 Web、移动 Web、插件 side panel 都看推荐卡样式。
+7. 在桌面 Web 配置页保存 source modes / source share，回读 `/api/config`。
+8. 桌面 Web、移动 Web 都看推荐卡样式；插件连接器检查来源识别和状态摘要。
 9. 如用户要求，跑 `--write-memory` / `--rebuild-profile`，确认 memory/profile 真的变化。
 
 任务型来源还要证明：执行前后原 active tab 一致（契约明确需前台的除外）、普通浏览事件增量为 0、task/result 的 extension ID 与安装 artifact 一致、重复 result/lease reclaim 后 canonical payload 和业务行不变。
@@ -693,8 +688,8 @@ npm run package:firefox:only -- --archive-version <extension-version>
 - `safe_actions` 是 fail-closed 机器入口，不是任意文案：只有受限只读动作语法、逐动作 `safe_assertions="upstream-state-unchanged"` 和 postcondition 才能列入；不认识的动词、非 ASCII 标签和平台自定义动作一律按状态变更处理，直到明确加入共享安全分类与回归测试。审计器不执行动作，也不替用户授权；真实 runner 仍必须核对请求方法/端点、安装产物和动作后的账号状态，不能用一段写着 `no/without/不改变` 的自由文案洗白实际 mutation。
 - 状态变更动作：like / favorite / follow / save / upvote / subscribe 只在用户明确允许或测试号中跑。
 - native-save 精确授权记录：仅有 `allow_state_changing=true` 不够；每次真实 favorite / watch-later 必须同时命名 exact platform、action、public `content_id` 与 `expected_target`，并按平台矩阵校验。trusted-local `/api/extension/e2e/run` dedicated 模式必须与 generic actions 互斥，只提交一个 canonical item 到 production `/api/saved/{action}/sync`，再按同一 durable task/item/resolved target 关联；通用 DOM E2E runner 禁止 native-save mutation。授权和结果都拒绝账号 ID、Cookie、token、HTML、响应正文和含秘密 URL；安全 callback 仅记录 `platform/action/content_id/expected_target/task_status/error_code`。自动同步默认关闭，手动两种 action 分开授权；duplicate 必须得到 `already_synced`，本地 cleanup 只删 membership 且确认平台记录保留。
-- 配置动作：插件页和 PC Web 保存后必须回读 `/api/config`，再确认 runtime source policy / pool share 生效。
-- 推荐动作：三端截图或像素/DOM 检查要覆盖长标题、无封面、文字卡和按钮区域。
+- 配置动作：PC Web 保存后必须回读 `/api/config`，再确认 runtime source policy / pool share 生效。
+- 推荐动作：桌面 / 移动截图或像素/DOM 检查要覆盖长标题、无封面、文字卡和按钮区域。
 - 画像 / eval：使用真实本地配置的 LLM provider，记录 provider、命令、候选 / 事件计数和最终 profile / candidate 状态。
 - 混合后端动作：如果默认后端会 fallback 到插件，报告时要把“默认后端成功”和“fallback 成功”拆开说；例如 CLI / SDK credential 未就绪但插件 fallback 完成 discovery，不能表述成默认后端已通。
 - Cookie / credential 同步动作：如果实现了插件同步第三方 CLI credential，要同时验证后端 endpoint、插件 runtime-stream / hot reload、浏览器 cookie 可读性和最终 credential 文件；若真实浏览器缺必要 cookie 名，要记录“不阻塞 fallback，但默认命令后端仍 login_required”。
@@ -720,7 +715,7 @@ npm run package:firefox:only -- --archive-version <extension-version>
 - `docs/index.html`
 - `docs/index.md`（新增文档时）
 - 新增扩展 host permission / 身份通道时，还要更新隐私声明、Chrome/Firefox 商店 listing 与人工审核说明。
-- 凭据获取步骤写到稳定文档锚点，所有 UI 只链接该锚点；不要在三端复制容易随上游变化的发令牌步骤。
+- 凭据获取步骤写到稳定文档锚点，所有 UI 只链接该锚点；不要在多个产品面复制容易随上游变化的发令牌步骤。
 
 Release-readiness 每次都检查；commit、version bump、push、tag、GitHub Release、商店上传和发布后操作只在用户明确要求时执行。用户未要求时，这些 mutation 行以 scope/authorization 证据记 `N/A (not requested)`，不要求虚构 contract test，也不阻塞代码接入 complete；用户已要求但尚未执行才是 `NOT_RUN`。不要为了“完整接入”擅自提交或发布。
 
@@ -748,7 +743,7 @@ Release-readiness 检查：
 
 ## 11. 完成判定
 
-验收报告至少包含：integration level、worktree/commit、contract 路径、每个 gate 的适用性与执行状态、primary/fallback transport、auth/account evidence、命令/exit code、build/package provenance、真实 E2E 计数与幂等样本、LLM provider/model、四端证据、实际执行的状态变更动作（默认 none）、risks/deferred，以及最终 verdict `complete / incremental only / blocked`。只有全部 required 行 `PASS` 才能写 `complete`。
+验收报告至少包含：integration level、worktree/commit、contract 路径、每个 gate 的适用性与执行状态、primary/fallback transport、auth/account evidence、命令/exit code、build/package provenance、真实 E2E 计数与幂等样本、LLM provider/model、setup/桌面/移动与插件连接器证据、实际执行的状态变更动作（默认 none）、risks/deferred，以及最终 verdict `complete / incremental only / blocked`。只有全部 required 行 `PASS` 才能写 `complete`。
 
 ## 常见失败模式
 
@@ -791,11 +786,11 @@ Release-readiness 检查：
 - smoke 默认写 memory 或触发画像。
 - 多个来源分支因为映射到同一 event type 而错误共享额度。
 - 配置页能保存，但 runtime source policy 没有使用。
-- 只做插件配置页，漏掉 PC Web；或只做平台开关，漏掉候选池 share。
+- 只给插件连接器加来源名，却漏掉 PC Web 的平台配置；或只做平台开关，漏掉候选池 share。
 - 旧 `config.toml` 缺新字段时崩溃或默默禁用。
 - `/api/sources/status` 永远显示固定状态，或测试漏掉 `unverified` 等插件任务源合法状态。
 - 来源关闭时提前返回「未启用」，把已存 / 已拒绝凭据和下一步一起藏掉。
-- 推荐卡只适配一端，移动 Web 或插件侧栏破版。
+- 推荐卡只适配一端，移动 Web 仍破版；或新增来源后插件连接器无法识别该站点。
 - 推荐卡能显示但按钮 payload / source filter / 打开链接仍按 B 站假设工作。
 - CLI / 卡片把所有作者叫「UP主」、把所有内容 ID 叫「BV号」。
 - 只跑单元测试，不跑真实 E2E。

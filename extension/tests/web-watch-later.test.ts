@@ -61,30 +61,3 @@ test("desktop web exposes watch-later page, badge, and delight star", () => {
   assert.match(desktopJs, /watchLaterStatus/);
   assert.match(desktopJs, /syncWatchLaterButtons/);
 });
-
-test("extension delight banner has a watch-later star action", () => {
-  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
-
-  assert.match(popupJs, /delightWatchLaterButton/);
-  assert.match(popupJs, /toggleSavedWithFeedback\("稍后再看", delight/);
-  assert.match(popupJs, /bindWatchLaterToggle\(btn, delight\)/);
-});
-
-test("extension popup exposes watch-later inside the content library", () => {
-  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
-  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
-
-  assert.match(popupHtml, /id="tabLibrary"[^>]*aria-controls="viewLibrary"/);
-  assert.match(popupHtml, /id="viewLibrary"[^>]*role="tabpanel"/);
-  assert.match(popupHtml, /id="tabWatchLater"[^>]*role="tab"/);
-  assert.match(popupHtml, /aria-controls="viewWatchLater"/);
-  assert.match(popupHtml, /id="viewWatchLater"/);
-  assert.match(popupHtml, /id="watchLaterList"/);
-  assert.match(popupHtml, /id="watchLaterEmpty"/);
-  assert.match(popupJs, /fetchSavedItems/);
-  assert.match(popupJs, /function loadWatchLater/);
-  assert.match(popupJs, /function buildSavedCard/);
-  // Removal goes through the shared optimistic binder (remove first,
-  // restore + 重试 on failure) instead of an inline await-then-remove.
-  assert.match(popupJs, /requestRemove:\s*\(itemKey\) => removeSavedItem\(listKind, itemKey\)/);
-});

@@ -48,19 +48,3 @@ test("desktop content library supports canonical hash history and legacy aliases
   assert.match(app, /event\.key === "Home"/);
   assert.match(app, /event\.key === "End"/);
 });
-
-test("popup maps old query tabs into one keyboard-operable content library", () => {
-  const html = readFileSync(resolve("popup", "popup.html"), "utf8");
-  const app = readFileSync(resolve("popup", "popup.js"), "utf8");
-  const topBar = html.match(/<div class="tab-bar"[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? "";
-
-  assert.equal((topBar.match(/class="tab-button/g) || []).length, 4);
-  assert.match(app, /POPUP_LIBRARY_TABS = \["watchLater", "favorites", "history"\]/);
-  assert.match(app, /\["recommend", "library", "watchLater", "favorites", "history", "profile", "chat"\]\.includes\(requestedTab\)/);
-  assert.match(app, /params\.get\("section"\) \|\| params\.get\("library"\)/);
-  assert.match(app, /legacyChild \? "library" : requestedTab/);
-  assert.match(app, /event\.key === "ArrowRight"/);
-  assert.match(app, /event\.key === "ArrowLeft"/);
-  assert.match(app, /event\.key === "Home"/);
-  assert.match(app, /event\.key === "End"/);
-});

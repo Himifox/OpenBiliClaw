@@ -113,6 +113,7 @@ import {
   startCookieSync,
   handleCookieSyncAlarm,
   handleCookieSyncRuntimeEvent,
+  requestIdentitySync,
 } from "./cookie-sync.js";
 import { handleE2ERuntimeEvent } from "./e2e-runner.ts";
 // Use .ts extension so node:test's --experimental-strip-types resolver
@@ -679,6 +680,11 @@ async function postBangumiIdentity(payload: { uid: number; username: string }): 
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "OBC_SYNC_IDENTITIES") {
+    requestIdentitySync("popup-manual");
+    sendResponse({ ok: true });
+    return;
+  }
   if (message.action === "BGM_IDENTITY_OBSERVED") {
     void postBangumiIdentity(message.data as { uid: number; username: string });
     return;

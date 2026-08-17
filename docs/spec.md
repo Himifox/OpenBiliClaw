@@ -43,8 +43,8 @@ OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 A
 - 采集用户亲手写的**评论 / 弹幕正文**（最强的兴趣表达之一）：X 回复正文与 B 站评论 / 弹幕正文均经 MAIN-world 网络 tap 在**提交成功后**采集（业务码校验），双端截断 200 字符 + 剥离控制字符后进入 `metadata.comment_text`（弹幕 `comment_kind="danmaku"`）
 - **小红书赞 / 收藏强信号**由 MAIN-world `xhs-action-tap`（`obc-xhs-action`，与 token sniffer 隔离）在网络层认定：like/dislike/collect/uncollect 写端点业务成功才发，替代此前「按钮文案匹配、图标按钮漏采」的 DOM 路径；xhs adapter 声明 `tapAuthoritativeActions:{like,favorite,retraction}`，kernel 抑制对应 DOM 发射，事件 URL 与后端 note 键型互通以支持赞→撤销折价
 - 记录用户的**主动反馈**：`dislike` 类动作统一规范成 `feedback` 事件，避免各平台负反馈语义分叉
-- 插件 side panel 与桌面 / 移动 Web 使用同一 platform-neutral 保存契约：卡片先本地保存，保存页显式同步并轮询逐项任务；默认关闭自动同步，首次开启提示将修改对应平台账号；本地删除不删除平台记录
-- 插件 side panel 与桌面 / 移动 Web 使用同一 30 天内容历史契约：recommendation-owned click、推荐展示和本地保存移除快照分别投影为「主动点开过 / 出现过但没点开 / 最近移除」，按 canonical identity 去重分页；保存移除项可恢复，封面不做整页预热，只按视口懒加载走现有图片代理缓存
+- 桌面 / 移动 Web 使用同一 platform-neutral 保存契约：卡片先本地保存，保存页显式同步并轮询逐项任务；默认关闭自动同步，首次开启提示将修改对应平台账号；本地删除不删除平台记录
+- 桌面 / 移动 Web 使用同一 30 天内容历史契约：recommendation-owned click、推荐展示和本地保存移除快照分别投影为「主动点开过 / 出现过但没点开 / 最近移除」，按 canonical identity 去重分页；保存移除项可恢复，封面不做整页预热，只按视口懒加载走现有图片代理缓存
 - 本机调试可通过 `/api/extension/e2e/run` 驱动已安装插件在抖音 / 小红书 / X 真实页面执行白名单 DOM 操作，再由后端校验 `/api/events` 是否自然入库；runner 会把复用 tab 归位到平台入口并在回传结果前 flush 捕捉 buffer，该链路不伪造行为事件，用于验证捕捉层本身。`/api/events` 的每个 `event_id`、`/api/feedback` 与 `/api/recommendation-click` 的 `request_id` 都是 trim 后 1–400 字符的必填稳定键；缺失、空白或超长由请求模型在任何 event/projection 写入前返回 422。同一动作重试必须复用，服务端不补随机键。`/api/events` 在画像明确未初始化时会拒收普通行为事件，首轮画像信号只由 guided init 来源任务拉取；初始化后所有 accepted event 都先经统一 ingress commit，HTTP 只 wake、不等待 pipeline / LLM。app-owned `EventProcessingScheduler` 让 `profile_events` generic consumer 与 `content_feedback` consumer 按各自 durable cursor 扫描显式 owner，以 event row ID 生成稳定 signal，并用 `checkpointed_enqueue_batch()` 在同一个 `pipeline_state.json` snapshot 中原子发布 buffer+cursor，再由 owner 调 `tick_if_buffered()`；独立周期画像维护才调用完整 `tick()`。首次 app startup 只 await owner fence、本地 durable 准备与 scheduler admission，真正 scan/checkpoint/consume 在 scheduler-owned background task 中继续；provider 401、pending buffer LLM 或永不返回调用不能延迟 listener/health。shutdown 取消并 gather；热重载仍同步 pause/drain/recover/rebind，不缩短 owner pass 或破坏 cursor/buffer。5 秒 safety scan 继续覆盖丢 wake。retraction 投影在 generic cursor 前完成，hypothesis/import feedback 由其它 owner 处理或只越过 feedback cursor。两个 owner 首次接管都先按最大 event row id 发布 cutover fence，旧 direct-ingest 行不重学。`feedback_state.json` 只作迁移 provenance/兼容镜像，不是 owner 权威。`pending_signal_events` 仍只是 search / related_chain refresh 的触发水位，不是画像待处理数。`/api/feedback` 另明确采用 event-first 两次 commit：durable event 后才单独更新 recommendation projection，第二步失败由同 `request_id` duplicate retry 校验并补投影，不宣称跨表原子；相同 ID 的不同 payload 维持 409。
 
 - 上述三个公开事件 ID 字段采用严格 JSON string 校验，不把数字、布尔或其它 JSON 类型自动转成
@@ -346,7 +346,7 @@ post-reply learning/object settlement (independent of durable reply backlog)
                  → kind×relation matrix ┐
                  → hypothesis card action ┴→ frozen snapshot → worker-only apply
                    action≤1s: completed → 200 | blocked → 202 processing
-                              └→ popup/mobile/desktop GET poll 1/2/5s, deadline 30s
+                              └→ mobile/desktop GET poll 1/2/5s, deadline 30s
                    pending open busy → 503 dialogue_busy/Retry-After → UI auto-retry ≤25m
                    active clarifying → only current holder; hide in sessions already showing it
                    confusion object failure → replay_queue(max 5, head-fenced) → 12h recovery
@@ -384,10 +384,10 @@ GET reconcile 与 legacy façade 也已全部接入同一个 production dispatch
 protected mutation 只允许 actual worker Task；嵌套 settle 沿该 task 的调用栈直调
 `_apply_*`，不 submit、不 inline dispatcher，也不存在 child 临时授权。继承 context
 的 active/detached child 对 mutation 与递归 admission 均 fail closed。
-队列 job 不持久化：action 本地等待 1 秒后按需返回 202，popup/移动/桌面在 30 秒内读取
+队列 job 不持久化：action 本地等待 1 秒后按需返回 202，移动/桌面在 30 秒内读取
 durable turn，重启丢 job 时允许同 action 重新提交；不增加 job table 或恢复 scanner。
 pending-open 是更严格的 required local transaction：长 LLM job 占住 worker 时不先
-admission，而返回 `dialogue_busy` 让 popup/移动/桌面带等待态自动重试；热重载保持 admission
+admission，而返回 `dialogue_busy` 让移动/桌面带等待态自动重试；热重载保持 admission
 直到队列 idle，再原子 pause/revoke，25 分钟安全窗覆盖 20 分钟 provider timeout。
 两条学习路径都使用 task-local bypass 跳过 background admission、保留 total gate，
 避免空库存反向阻塞纠偏。若学习真正新增长期避雷项，则在偏好落盘后立即复用共享
@@ -466,7 +466,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │ -> /api/content-history 三分类分页 -> 插件/移动/桌面 lazy 封面 │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ durable chat：session=popup -> 插件/移动/桌面；主历史含 probe 聊天 │   │
+│  │ durable chat：session=popup（兼容名）-> 移动/桌面；主历史含 probe 聊天 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 推荐/探针反馈：即时 UI -> 10s 可撤销 -> event commit/HTTP 200 -> 5s owner │ │

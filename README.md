@@ -112,7 +112,7 @@
 
 ## 📸 功能预览
 
-核心入口现在有五个：浏览器插件负责平台内交互和登录会话，桌面端 Web（`/web`）提供大屏推荐首页，移动端 Web（`/m`）适合手机使用，另有独立仓库的原生 Flutter 客户端（[OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile)）覆盖 Android / iOS / Web / 桌面，以及把同一套面板搬进 DSH Web 界面的 [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw)（第四栏 + 22 个 Agent Bridge 工具）。桌面端、移动端 Web、原生客户端和 DSH 插件都只调用本地 API，Cookie 同步和平台任务仍由插件承担。
+核心入口现在有五个：浏览器插件作为轻量连接器，负责平台内交互、登录会话和只读任务；桌面端 Web（`/web`）提供完整的大屏推荐、内容库、画像、对话和设置，移动端 Web（`/m`）适合手机使用，另有独立仓库的原生 Flutter 客户端（[OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile)）覆盖 Android / iOS / Web / 桌面，以及把同一套面板搬进 DSH Web 界面的 [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw)（第四栏 + 22 个 Agent Bridge 工具）。桌面端、移动端 Web、原生客户端和 DSH 插件都只调用本地 API，Cookie 同步和平台任务仍由插件承担。
 
 <table>
   <tr>
@@ -232,7 +232,7 @@
 
 ### 1. 安装浏览器插件
 
-插件是主要入口：它会在受支持站点显示侧边栏、采集你的反馈，并承接知乎、Reddit、Linux.do、V2EX、微博等登录态只读任务。Linux.do、V2EX 与微博的任务 tab 和普通行为采集隔离；微博公开 discovery 由后端独立完成，个人初始化才使用微博 host permission 和同源任务桥。
+插件是浏览器连接器，不是完整客户端：侧栏只显示后端连接、当前来源和身份同步状态，并提供“打开主应用”；推荐、内容库、画像、对话和完整设置统一放在桌面 Web。插件仍会在受支持站点采集必要行为，并承接知乎、Reddit、Linux.do、V2EX、微博等登录态只读任务。Linux.do、V2EX 与微博的任务 tab 和普通行为采集隔离；微博公开 discovery 由后端独立完成，个人初始化才使用微博 host permission 和同源任务桥。
 
 插件基于 Manifest V3，支持所有兼容 Chrome 插件的浏览器，包括 **Chrome、Edge、Brave、Arc、Vivaldi、Opera** 等；另提供 **Safari（macOS）** 构建，Release 自动附带 `openbiliclaw-extension-v*-safari.dmg`（配置 Apple 凭据时为 Developer ID 签名 + 公证；未配置时为 ad-hoc 实验包，需在 Safari 开启「允许未签名扩展」），也可本地经 Apple `safari-web-extension-converter` 转成 Xcode 工程后安装（详见 [Safari 构建文档](docs/safari-extension-build.md)）。
 
@@ -599,8 +599,8 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 - 💬 **有温度的推荐理由** — 像朋友一样解释为什么你会喜欢，而不是「因为你看过类似视频」
 - 🔄 **持续学习** — 苏格拉底式对话 + 行为分析 + 反馈即时生效，越用越懂你
 - ⭐ **本地优先收藏 / 稍后看** — 推荐卡先写本地 SQLite，自动同步默认关闭；桌面 Web 刷新后首屏就显示保存数量徽标；B站和六个扩展平台均支持收藏与原生稍后看/收藏回退，2026-07-14 七平台两类动作真实账号回归均为 `synced/already_synced`
-- 🕘 **30 天内容历史** — 插件、桌面与移动端统一显示点开过、出现未点和最近移除；按页懒加载封面，移除的本地收藏 / 稍后看可一键恢复
-- 🧩 **浏览器插件** — Chrome / Edge / Brave / Arc / Firefox / Safari，侧边栏推荐 + 跨站行为采集，装上就能用
+- 🕘 **30 天内容历史** — 桌面与移动端统一显示点开过、出现未点和最近移除；按页懒加载封面，移除的本地收藏 / 稍后看可一键恢复
+- 🧩 **浏览器插件** — Chrome / Edge / Brave / Arc / Firefox / Safari；轻量侧栏连接器 + 跨站行为采集 + 登录态只读任务
 - 📱 **Flutter 原生客户端** — 独立仓库 [OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile)，Android / iOS / Web / Linux / macOS / Windows 连接同一本地后端；B 站封面 CDN 直连省两跳
 - 🚀 **图形化引导初始化** — 安装包 `/setup/`、桌面 Web 和插件都能点一下完成初始化，不碰命令行
 - 📦 **跨机器迁移** — 桌面配置页一键导出 / 导入可移植配置、SQLite、画像、Cookie 与图片缓存；导入先校验暂存，可查询 / 取消，重启后带回滚副本应用。`.obcbackup` 含明文敏感信息，但不含源机 API 登录密码 / 会话签名密钥或扩展设备 key
@@ -649,7 +649,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
                        ├→ frozen kind/ref/generation → worker-only apply → event/object/derived/marker → applied
                        │                                                └→ publication-only retry → 跨 session 投影 / 精确解锚
                        ├→ one context digest → prompt/history/event/learn/settlement provenance
-                       ├→ action 本地≤1s：完成 200 / 阻塞 202 → popup/移动/桌面 1/2/5s 轮询≤30s
+                       ├→ action 本地≤1s：完成 200 / 阻塞 202 → 移动/桌面 1/2/5s 轮询≤30s
                        └→ 疑惑 FIFO≤5 / 队头 fencing / 12h 补扫
 配置保存：事务落盘后统一 HTTP 202 queued/apply_revision → latest-wins 后台应用队列 → apply-status / 成功失败回执；data_dir 仅持久化，完整重启后切换
 配置热重载：保持接单并排空旧 worker → 原子暂停/revoke → 新 worker；安全窗25分钟
@@ -662,7 +662,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 ┌────────────────────────────────────────────────┐
 │    浏览器插件（Chrome / Firefox / Safari）     │
 │   行为采集 · MAIN-world tap（评论/弹幕·xhs强信号）│
-│   Cookie 同步 · 平台任务 · 侧边栏推荐             │
+│   Cookie 同步 · 平台任务 · 连接状态/来源摘要        │
 └──────────────────────┬─────────────────────────┘
                        │ HTTP 默认：IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
                        │ HTTPS 可选：公网 Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → 同一 API
@@ -741,7 +741,7 @@ CLI/OpenClaw → SocraticDialogue(legacy_direct) → user+agent 历史 → 队�
 瞬态/provider/超时/取消 → 回滚临时历史 → durable pending + 队头有界重试；显式空/无效响应 → failed CAS
 durable turn → 固定时间/payload → 确认入口（待聊列表/卡片） → frozen anchor admission → relation matrix
                                                    └→ 卡片/锚/chat/probe/confusion/replay/legacy 全部 worker-only
-卡片 action → 同步 200（空队列快路）| 202 processing → popup/移动/桌面轮询；CLI 无 action
+卡片 action → 同步 200（空队列快路）| 202 processing → 移动/桌面轮询；CLI 无 action
 
 桌面首屏：推荐 hydration │ runtime hydration │ health/profile/activity/config 次级 hydration（三分支独立）
 桌面后台恢复（已有卡片）：跳过可能补池的推荐 GET │ 只同步 runtime / 库存状态

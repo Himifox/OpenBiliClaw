@@ -1,13 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
-// The shared module is a classic script (it has to be: the side panel loads it
-// through a <script> tag because MV3's CSP forbids importing it from the
-// backend). Importing it for its side effect is enough — it publishes itself on
-// globalThis, the same way the side panel, the desktop page and the setup
-// wizard all consume it.
+// The shared module is a classic script used by the desktop and setup surfaces.
+// Importing it for its side effect is enough: it publishes itself on globalThis.
 await import("../../src/openbiliclaw/web/shared/source-status.js");
 
 const SourceStatus = (globalThis as Record<string, any>).OpenBiliClawSourceStatus;
@@ -616,25 +612,6 @@ test("the cooldown makes a debounced button visibly wait", () => {
   SourceStatus.startVerifyCooldown(button, 0, { clock });
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, "测试连接");
-});
-
-// The side panel cannot fetch this file over HTTP (MV3 CSP), so the build copies
-// it into the package. If that wiring breaks, the panel loads popup.js against
-// an undefined global and every source row goes blank — worth failing loudly.
-test("the side panel is wired to the copied shared module", () => {
-  const root = process.cwd();
-  const html = readFileSync(join(root, "popup/popup.html"), "utf8");
-  const build = readFileSync(join(root, "scripts/build.mjs"), "utf8");
-
-  const shared = html.indexOf('src="shared/source-status.js"');
-  const popup = html.indexOf('src="popup.js"');
-  assert.ok(shared > 0, "popup.html does not load the shared module");
-  // Classic script first: it must have run before the deferred module reads it.
-  assert.ok(shared < popup, "the shared module must be loaded before popup.js");
-  assert.ok(
-    build.includes("web/shared") && build.includes("popup/shared"),
-    "build.mjs no longer copies the shared module into the package",
-  );
 });
 
 // A no-auth source can still carry a verifiable credential. YouTube and Bangumi

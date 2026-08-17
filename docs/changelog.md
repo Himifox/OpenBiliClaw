@@ -6,6 +6,7 @@
 
 ## 未发布
 
+- **浏览器插件收敛为轻量连接器**：side panel / popup 不再重复承载推荐、内容库、画像、对话、guided init 和完整后端配置，只保留后端连接、当前来源识别、11 个来源状态、手动身份同步、主应用入口、端点配置与远程设备配对。后台跨站行为采集、Cookie / 登录态同步和只读来源任务 dispatcher 保持不变；手动同步仅复用既有身份上报，不触发点赞、收藏、关注等上游账号写操作。完整使用体验统一进入桌面 Web `/web`。
 - **修复 Windows PowerShell 5.1 安装器在 clone 成功后静默退出（issue #177）**：`install.ps1` 现在在检查 `$LASTEXITCODE` 前捕获 `git clone` 的 stderr；PS 5.1 不再把 Git 的正常进度输出误判为终止错误，完整 clone 会继续运行 bootstrap，真实 clone 失败仍会显示 Git 原始诊断并清理临时日志。
 - **修复桌面 Web 关闭自动续页后后台仍消耗可换库存（issue #81）**：已有推荐卡片时切回标签页、配置应用和状态水合不再请求可能触发首屏补池的 `/api/recommendations`，只同步 runtime / 库存状态；只有空列表首屏或用户明确手动刷新才读取推荐快照，已显示卡片和库存开关边界保持稳定。
 - **修复 YouTube bootstrap 任务卡在 `in_progress` 无法回收（issue #178）**：Chrome MV3 service worker 休眠会丢失 `setTimeout`，导致扩展 `yt-task-dispatcher.ts` 的任务超时不再触发、`/api/sources/yt/next-task` 被一条 stale `in_progress` 任务长期占住。扩展侧改为 `chrome.alarms` 一次性定时器（`when: deadline_at`）做任务超时，并把 `{task_id, deadline_at, tab_id}` 写入 `chrome.storage.session`（不可用时回退 `chrome.storage.local`）；alarm 触发或 worker 重启后检测到持久化记录时回传 `task_timeout` / `service_worker_restart` 终态并关闭孤儿 tab。后端 `YtTaskQueue` 新增 `expire_stale_in_progress()`，在 `/api/sources/yt/next-task` 领取前与 `enqueue_yt_bootstrap` 入队前把超过阈值（`OPENBILICLAW_YT_STALE_IN_PROGRESS_SECONDS`，默认 600s）且无 staged canonical 结果的 `in_progress` 任务自动置 `failed`；带 `_openbiliclaw_terminal_status` 的结果保留不覆盖，仍走 stale-reclaim 修复投影；`next_pending` 同时把 `claimed_at IS NULL` 的旧 in-progress 行纳入可重领范围。

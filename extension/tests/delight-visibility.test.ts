@@ -37,48 +37,6 @@ test("mobile stream removes only negative delight feedback", () => {
   assert.match(chatJs, /if \(permanent\) \{\s*markDelightSent[\s\S]*?delightMsgs = delightMsgs\.filter/);
 });
 
-test("extension delight banner keeps positive actions visible", () => {
-  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
-  const openBlock = sourceBlock(
-    popupJs,
-    "const openButton = createActionButton(",
-    "const likeButton = createActionButton(",
-  );
-  const likeBlock = sourceBlock(
-    popupJs,
-    "const likeButton = createActionButton(",
-    "const rejectButton = createActionButton(",
-  );
-  const rejectBlock = sourceBlock(
-    popupJs,
-    "const rejectButton = createActionButton(",
-    "const chatButton = createActionButton(",
-  );
-
-  assert.doesNotMatch(openBlock, /shiftDelightQueue|removeCurrentDelight/);
-  assert.doesNotMatch(likeBlock, /shiftDelightQueue|removeCurrentDelight|rememberDismissedDelight/);
-  assert.match(rejectBlock, /removeCurrentDelight/);
-});
-
-test("extension delight close persists handled content as seen", () => {
-  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
-  const rememberBlock = sourceBlock(
-    popupJs,
-    "function rememberDismissedDelight(bvid)",
-    "// ── Delight queue helpers",
-  );
-  const dismissBlock = sourceBlock(
-    popupJs,
-    'dismiss.className = "delight-banner-dismiss";',
-    "banner.append(row, dismiss);",
-  );
-
-  assert.match(rememberBlock, /respondToDelight\(bvid, "dismiss"\)/);
-  assert.doesNotMatch(rememberBlock, /markDelightSent/);
-  assert.match(dismissBlock, /aria-label", "看过了，不再推荐"/);
-  assert.match(dismissBlock, /await rememberDismissedDelight\(delight\.bvid\)/);
-});
-
 test("desktop delight actions remove only explicit negative responses", () => {
   const desktopJs = readFileSync(
     resolve("../src/openbiliclaw/web/desktop/assets/js/app.js"),
@@ -201,16 +159,7 @@ test("mobile recommendation-click retry uses recommendation id before a signed U
   assert.notEqual(submitted[0].content_url, submitted[1].content_url);
 });
 
-test("all recommendation-click clients use URL only without recommendation or content ids", () => {
-  const popupApi = readFileSync(resolve("popup", "popup-api.js"), "utf8");
-  const popupBlock = sourceBlock(
-    popupApi,
-    "export async function reportRecommendationClick(payload)",
-    "export async function sendChatMessage",
-  );
-  assert.match(popupBlock, /if \(!stableRecommendationId && !stableContentId\)/);
-  assert.match(popupBlock, /stableContentId \|\| fallbackUrl/);
-
+test("desktop recommendation clicks use URL only without stable ids", () => {
   const desktopJs = readFileSync(
     resolve("../src/openbiliclaw/web/desktop/assets/js/app.js"),
     "utf8",

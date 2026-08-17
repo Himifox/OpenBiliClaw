@@ -79,25 +79,3 @@ test("desktop web exposes favorites page, badge, and delight star", () => {
   assert.match(desktopJs, /favoriteStatus/);
   assert.match(desktopJs, /syncFavoriteButtons/);
 });
-
-test("extension popup has favorites inside the content library", () => {
-  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
-  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
-
-  assert.match(popupHtml, /id="tabLibrary"[^>]*aria-controls="viewLibrary"/);
-  assert.match(popupHtml, /id="tabFavorites"[^>]*role="tab"/);
-  assert.match(popupHtml, /id="viewFavorites"/);
-  assert.match(popupHtml, /id="favoritesList"/);
-  assert.match(popupJs, /delightFavoriteButton/);
-  assert.match(popupJs, /toggleSavedWithFeedback\("收藏", delight/);
-  assert.match(popupJs, /bindFavoriteToggle\(btn, delight\)/);
-  assert.match(popupJs, /function loadFavorites/);
-});
-
-test("extension popup recommendation cards have a favorite star toggle", () => {
-  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
-
-  assert.match(popupJs, /toggleSavedWithFeedback\("收藏", item/);
-  assert.match(popupJs, /bindFavoriteToggle\(btn, item\)/);
-  assert.match(popupJs, /classList\.add\("saved-toggle",\s*"favorite-btn"\)/);
-});

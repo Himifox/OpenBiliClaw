@@ -91,7 +91,7 @@ Core behavior, recommendation, and dialogue data lives in SQLite on your disk; c
 
 ## 📸 Feature Preview
 
-Five core surfaces: the browser extension handles in-page interaction and login sessions, the Desktop Web (`/web`) gives you a big-screen recommendation home, the Mobile Web (`/m`) is built for phones, a native Flutter client ([OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile), separate repo) covers Android / iOS / Web / desktop, and a [DSH client plugin](https://github.com/whiteguo233/dsh-openbiliclaw) brings the same panels into the DSH web GUI as a fourth column (plus 22 Agent Bridge tools). Every non-extension surface only calls your local API — cookie sync and platform tasks still run through the extension.
+Five core surfaces: the browser extension is a lightweight connector for in-page interaction, login sessions, and read-only tasks; the Desktop Web (`/web`) provides the complete recommendation, library, profile, chat, and settings experience; the Mobile Web (`/m`) is built for phones; a native Flutter client ([OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile), separate repo) covers Android / iOS / Web / desktop; and a [DSH client plugin](https://github.com/whiteguo233/dsh-openbiliclaw) brings the same panels into the DSH web GUI as a fourth column (plus 22 Agent Bridge tools). Every non-extension surface only calls your local API — cookie sync and platform tasks still run through the extension.
 
 <table>
   <tr>
@@ -162,7 +162,7 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
     <td align="center" width="33%">
       <img src="docs/images/mobile-chat.png" width="210" /><br/>
       <b>Chat</b><br/>
-      <sub>Shared main chat history with the extension</sub>
+      <sub>Shared chat history across the full app clients</sub>
     </td>
   </tr>
 </table>
@@ -227,7 +227,7 @@ For most users, setup is four steps: install the extension, ask an AI coding age
 
 ### 1. Install the browser extension
 
-The extension is the main interface. It shows the sidebar on supported sites, records feedback, and runs bounded read-only tasks for sources including Zhihu, Reddit, Linux.do, V2EX, and Weibo. Linux.do, V2EX, and Weibo task tabs are isolated from passive behavior collection; Weibo public discovery still runs independently in the backend.
+The extension is a browser connector, not the full client. Its compact panel shows backend connectivity, the current source, identity sync, and a link to the main app; recommendations, library, profile, chat, and full settings live in Desktop Web. It still records necessary behavior on supported sites and runs bounded read-only tasks for sources including Zhihu, Reddit, Linux.do, V2EX, and Weibo. Linux.do, V2EX, and Weibo task tabs are isolated from passive behavior collection; Weibo public discovery still runs independently in the backend.
 
 Built on Manifest V3, the extension works in any Chrome-compatible browser — **Chrome, Edge, Brave, Arc, Vivaldi, Opera**, and more; a **Safari (macOS)** build is also provided. Releases automatically attach `openbiliclaw-extension-v*-safari.dmg` (Developer ID-signed and notarized when Apple credentials are configured, otherwise an ad-hoc experimental build that requires Safari's "Allow Unsigned Extensions"), and you can also convert the local build to an Xcode project via Apple's `safari-web-extension-converter` (see the [Safari build guide](docs/safari-extension-build.md)).
 
@@ -595,8 +595,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 💬 **Warm Recommendations** — friend-like explanations of why you'd enjoy something, not "because you watched similar videos"
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis + instant feedback; it understands you better over time
 - ⭐ **Local-First Favorites / Watch Later** — cards save to local SQLite first and auto-sync stays off by default; desktop Web hydrates the sidebar count badges on first load; the 2026-07-14 real-account regression completed both actions across all seven platforms as `synced/already_synced`
-- 🕘 **30-Day Content History** — extension, desktop, and mobile share opened, surfaced-but-unopened, and recently removed views; covers are paged and lazy-loaded, and removed local saves can be restored
-- 🧩 **Browser Extension** — Chrome / Edge / Brave / Arc / Firefox / Safari; side-panel recommendations + cross-site behavior collection, install and go
+- 🕘 **30-Day Content History** — desktop and mobile share opened, surfaced-but-unopened, and recently removed views; covers are paged and lazy-loaded, and removed local saves can be restored
+- 🧩 **Browser Extension** — Chrome / Edge / Brave / Arc / Firefox / Safari; compact connector panel + cross-site behavior collection + login-session read-only tasks
 - 📱 **Flutter Native Client** — separate repo [OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile); Android / iOS / Web / Linux / macOS / Windows against the same local backend, with Bilibili covers hitting the CDN directly to skip two hops
 - 🚀 **Guided Init in the UI** — the packaged `/setup/` wizard, Desktop Web, and the extension can all initialize with one click; no terminal required
 - 📦 **Cross-Machine Migration** — export/import portable config, SQLite, profiles, cookies, and the image cache from Desktop settings; imports are validated and staged, can be inspected or cancelled, then apply on restart with rollback copies. `.obcbackup` contains plaintext secrets but excludes the source machine's API-login password, session-signing secret, and extension device keys
@@ -645,7 +645,7 @@ confirmation entry (pending list/cards) → one anchor(kind+ref+generation) → 
                           ├→ frozen kind/ref/generation → worker-only apply → event/object/derived/marker → applied
                           │                                                └→ publication-only retry → projection / exact release
                           ├→ one context digest → prompt/history/event/learn/settlement provenance
-                          ├→ action local≤1s: completed 200 / blocked 202 → popup/mobile/desktop poll 1/2/5s, ≤30s
+                          ├→ action local≤1s: completed 200 / blocked 202 → mobile/desktop poll 1/2/5s, ≤30s
                           └→ confusion FIFO≤5 / head fencing / 12h recovery
 config save: persist → HTTP 202 queued/apply_revision → latest-wins background apply queue → apply-status / final receipt; data_dir is persisted only and switches after a full restart
 config hot reload: accepting drain old worker → atomic pause/revoke → new worker; 25m safety window
@@ -658,7 +658,8 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 ┌────────────────────────────────────────────────┐
 │ Browser Extension (Chrome / Firefox / Safari)  │
 │  Behavior capture · MAIN-world taps (comment/  │
-│  danmaku, xhs strong signal) · Cookie · Tasks  │
+│ danmaku, xhs strong signal) · Cookie · Tasks · │
+│                Connector panel                 │
 └──────────────────────┬─────────────────────────┘
                        │ HTTP default: IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
                        │ Optional HTTPS: public Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → same API
@@ -739,7 +740,7 @@ learning → bypass background admission; keep total gate ── new dislike: sh
 transient/provider/timeout/cancel → rollback provisional history → durable pending + head retry; explicit invalid/empty → failed CAS
 durable turn → fixed time/payload → confirmation entry (pending list/cards) → frozen anchor admission → relation matrix
                                                   └→ card/anchor/chat/probe/confusion/replay/legacy all worker-only
-card action → synchronous 200 fast path | 202 processing → popup/mobile/desktop poll; CLI has no action
+card action → synchronous 200 fast path | 202 processing → mobile/desktop poll; CLI has no action
 
 Desktop startup: recommendation hydration │ runtime hydration │ secondary health/profile/activity/config hydration (independent)
 Desktop background resume (cards already loaded): skip the pool-filling recommendation GET │ sync runtime / inventory status only

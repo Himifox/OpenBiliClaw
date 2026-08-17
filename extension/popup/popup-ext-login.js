@@ -17,7 +17,8 @@ export function initExtLogin(els = {}, opts = {}) {
   const setStatus = (msg, ok = null) => {
     if (!els.status) return;
     els.status.textContent = msg;
-    els.status.style.color = ok === true ? "#30b980" : ok === false ? "#ef7a86" : "";
+    els.status.classList?.toggle("is-success", ok === true);
+    els.status.classList?.toggle("is-error", ok === false);
   };
   const showFields = (visible) => {
     if (els.deviceKey) els.deviceKey.hidden = !visible;
