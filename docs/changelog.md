@@ -6,6 +6,7 @@
 
 ## 未发布
 
+- **插件在 NEKO / 后端未启动时继续缓存画像与浏览行为**：MV3 本地行为 outbox 扩为最多 1000 条、保留 30 天，恢复连接后按 100 条 FIFO 批次续传并复用原 `event_id`；popup 会按后端地址保存最后一份已初始化画像摘要，离线时以只读模式和缓存时间明确展示，重连自动刷新，后端重置为未初始化或切换地址时不会误用旧画像。缓存只写浏览器本地扩展存储，不保存 Cookie、API Key 或设备密钥。
 - **修复 Windows PowerShell 5.1 安装器在 clone 成功后静默退出（issue #177）**：`install.ps1` 现在在检查 `$LASTEXITCODE` 前捕获 `git clone` 的 stderr；PS 5.1 不再把 Git 的正常进度输出误判为终止错误，完整 clone 会继续运行 bootstrap，真实 clone 失败仍会显示 Git 原始诊断并清理临时日志。
 - **修复桌面 Web 关闭自动续页后后台仍消耗可换库存（issue #81）**：已有推荐卡片时切回标签页、配置应用和状态水合不再请求可能触发首屏补池的 `/api/recommendations`，只同步 runtime / 库存状态；只有空列表首屏或用户明确手动刷新才读取推荐快照，已显示卡片和库存开关边界保持稳定。
 - **修复 YouTube bootstrap 任务卡在 `in_progress` 无法回收（issue #178）**：Chrome MV3 service worker 休眠会丢失 `setTimeout`，导致扩展 `yt-task-dispatcher.ts` 的任务超时不再触发、`/api/sources/yt/next-task` 被一条 stale `in_progress` 任务长期占住。扩展侧改为 `chrome.alarms` 一次性定时器（`when: deadline_at`）做任务超时，并把 `{task_id, deadline_at, tab_id}` 写入 `chrome.storage.session`（不可用时回退 `chrome.storage.local`）；alarm 触发或 worker 重启后检测到持久化记录时回传 `task_timeout` / `service_worker_restart` 终态并关闭孤儿 tab。后端 `YtTaskQueue` 新增 `expire_stale_in_progress()`，在 `/api/sources/yt/next-task` 领取前与 `enqueue_yt_bootstrap` 入队前把超过阈值（`OPENBILICLAW_YT_STALE_IN_PROGRESS_SECONDS`，默认 600s）且无 staged canonical 结果的 `in_progress` 任务自动置 `failed`；带 `_openbiliclaw_terminal_status` 的结果保留不覆盖，仍走 stale-reclaim 修复投影；`next_pending` 同时把 `claimed_at IS NULL` 的旧 in-progress 行纳入可重领范围。

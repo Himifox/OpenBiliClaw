@@ -2477,6 +2477,17 @@
       gap: 10px;
       margin: 6px 0 12px;
     }
+    .profile-cache-notice {
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--warning-soft);
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
     .profile-edit-toggle {
       background: rgba(244, 247, 255, 0.92);
       color: var(--text-secondary);
@@ -5924,6 +5935,7 @@
           <h2>我感觉你大概是这样的</h2>
           <p>不是光看你点过啥，我主要在看你会为哪种东西停下来。</p>
         </div>
+        <p id="profileCacheNotice" class="profile-cache-notice" role="status" hidden></p>
         <div id="profileEditBar" class="profile-edit-bar" hidden>
           <button id="profileEditToggle" class="action-button profile-edit-toggle" type="button">✏️ 编辑画像</button>
           <span id="profileEditHint" class="profile-edit-hint" hidden>改完点「完成」收起</span>

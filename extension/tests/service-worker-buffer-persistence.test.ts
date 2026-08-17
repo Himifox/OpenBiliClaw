@@ -5,7 +5,9 @@ import { resolve } from "node:path";
 
 import {
   BUFFER_MAX_SIZE,
+  EVENT_TTL_MS,
   EVENT_BUFFER_KEY,
+  FLUSH_BATCH_SIZE,
   INFLIGHT_KEY,
   PARKED_KEY,
   PARKED_MAX,
@@ -266,6 +268,62 @@ test("claimed HTTP batch remains durable inflight and keeps its event_id across 
   }
 });
 
+test("a long offline outbox flushes in bounded FIFO batches", async () => {
+  const stub = installStorageStub();
+  __resetBufferForTests();
+  try {
+    for (let i = 0; i < FLUSH_BATCH_SIZE + 5; i += 1) {
+      await enqueueEvent(makeEvent("view", `https://x/batch-${i}`));
+    }
+
+    const first = await claimBufferedEventsForFlush();
+    assert.equal(first.length, FLUSH_BATCH_SIZE);
+    assert.equal(first[0].url, "https://x/batch-0");
+    assert.equal(
+      (stub.store.get(EVENT_BUFFER_KEY) as BehaviorEvent[]).length,
+      5,
+      "unclaimed rows stay durably owned by the live outbox",
+    );
+
+    await completeInflightEvents();
+    const second = await claimBufferedEventsForFlush();
+    assert.deepEqual(
+      second.map((event) => event.url),
+      Array.from({ length: 5 }, (_, i) => `https://x/batch-${FLUSH_BATCH_SIZE + i}`),
+    );
+  } finally {
+    stub.restore();
+    __resetBufferForTests();
+  }
+});
+
+test("service worker drains consecutive successful batches without waiting for another alarm", () => {
+  const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
+  const flushStart = source.indexOf("async function flushEvents");
+  const flushEnd = source.indexOf("// Alarm & lifecycle", flushStart);
+  const flushSource = source.slice(flushStart, flushEnd);
+  assert.match(flushSource, /while \(getBufferLength\(\) > 0\)/);
+  assert.match(flushSource, /await completeInflightEvents\(\)/);
+});
+
+test("restore prunes behavior events older than the offline retention window", async () => {
+  const stub = installStorageStub();
+  __resetBufferForTests();
+  try {
+    const stale = makeEvent("view", "https://x/stale-event");
+    stale.timestamp = Date.now() - EVENT_TTL_MS - 1;
+    const fresh = makeEvent("view", "https://x/fresh-event");
+    stub.store.set(EVENT_BUFFER_KEY, [stale, fresh]);
+
+    await bufferReady();
+    const restored = await claimBufferedEventsForFlush();
+    assert.deepEqual(restored.map((event) => event.url), ["https://x/fresh-event"]);
+  } finally {
+    stub.restore();
+    __resetBufferForTests();
+  }
+});
+
 test("failed inflight completion retains the in-memory owner for same-worker retry", async () => {
   const stub = installStorageStub();
   __resetBufferForTests();
@@ -411,11 +469,11 @@ test("parkEvents enforces the FIFO cap, dropping the oldest parked events", asyn
   }
 });
 
-test("drainParkedEvents drops entries older than the 48h TTL", async () => {
+test("drainParkedEvents drops entries older than the 30-day TTL", async () => {
   const stub = installStorageStub();
   __resetBufferForTests();
   try {
-    const stale = { parkedAt: Date.now() - 49 * 3_600_000, event: makeEvent("click", "https://x/stale") };
+    const stale = { parkedAt: Date.now() - EVENT_TTL_MS - 1, event: makeEvent("click", "https://x/stale") };
     const fresh = { parkedAt: Date.now(), event: makeEvent("click", "https://x/fresh") };
     stub.store.set(PARKED_KEY, [stale, fresh]);
 

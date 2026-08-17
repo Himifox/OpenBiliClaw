@@ -29,12 +29,16 @@ export const EVENT_BUFFER_KEY = "obc_event_buffer";
 export const INFLIGHT_KEY = "obc_event_inflight";
 /** chrome.storage.local key holding events parked while the backend is uninitialized. */
 export const PARKED_KEY = "obc_parked_events";
-/** Bounds in-memory + mirrored buffer growth when the backend is down for days. */
-export const BUFFER_MAX_SIZE = 50;
+/** Bounds the durable offline outbox without exhausting storage.local quota. */
+export const BUFFER_MAX_SIZE = 1_000;
+/** Keep individual HTTP requests small while a long offline backlog catches up. */
+export const FLUSH_BATCH_SIZE = 100;
+/** Browsing facts older than this no longer contribute useful current-profile signal. */
+export const EVENT_TTL_MS = 30 * 24 * 3_600_000;
 /** Parking lot cap; oldest parked events are FIFO-evicted past this. */
-export const PARKED_MAX = 500;
+export const PARKED_MAX = BUFFER_MAX_SIZE;
 /** Parked events older than this are dropped on read. */
-export const PARKED_TTL_MS = 48 * 3_600_000;
+export const PARKED_TTL_MS = EVENT_TTL_MS;
 
 interface ParkedEntry {
   parkedAt: number;
@@ -132,8 +136,20 @@ async function storageRemove(key: string): Promise<void> {
 
 function asEventArray(value: unknown): BehaviorEvent[] {
   return Array.isArray(value)
-    ? (value as BehaviorEvent[]).map((event) => ensureEventId(event))
+    ? pruneExpiredEvents((value as BehaviorEvent[]).map((event) => ensureEventId(event)))
     : [];
+}
+
+/** Drop expired persisted facts while preserving legacy rows without a valid timestamp. */
+export function pruneExpiredEvents(
+  events: BehaviorEvent[],
+  now = Date.now(),
+): BehaviorEvent[] {
+  const cutoff = now - EVENT_TTL_MS;
+  return events.filter((event) => {
+    const timestamp = Number(event?.timestamp);
+    return !Number.isFinite(timestamp) || timestamp <= 0 || timestamp >= cutoff;
+  });
 }
 
 function newEventId(): string {
@@ -197,8 +213,9 @@ async function restoreBuffer(): Promise<void> {
       ...inflightBuffer,
     ]);
     eventBuffer = dedupeByEventId([...asEventArray(stored), ...eventBuffer]);
-    if (eventBuffer.length > BUFFER_MAX_SIZE) {
-      eventBuffer = eventBuffer.slice(eventBuffer.length - BUFFER_MAX_SIZE);
+    const liveCapacity = Math.max(0, BUFFER_MAX_SIZE - inflightBuffer.length);
+    if (eventBuffer.length > liveCapacity) {
+      eventBuffer = eventBuffer.slice(eventBuffer.length - liveCapacity);
     }
     await storageSet({
       [EVENT_BUFFER_KEY]: eventBuffer,
@@ -256,13 +273,14 @@ export async function claimBufferedEventsForFlush(): Promise<BehaviorEvent[]> {
   return withBufferMutation(async () => {
     if (inflightBuffer.length > 0) return [...inflightBuffer];
     if (eventBuffer.length === 0) return [];
-    const claimed = eventBuffer;
+    const claimed = eventBuffer.slice(0, FLUSH_BATCH_SIZE);
+    const remaining = eventBuffer.slice(claimed.length);
     await storageSet({
       [INFLIGHT_KEY]: claimed,
-      [EVENT_BUFFER_KEY]: [],
+      [EVENT_BUFFER_KEY]: remaining,
     });
     inflightBuffer = claimed;
-    eventBuffer = [];
+    eventBuffer = remaining;
     return [...inflightBuffer];
   });
 }
@@ -290,11 +308,13 @@ export async function enqueueEvent(event: BehaviorEvent): Promise<number> {
   await bufferReady();
   return withBufferMutation(async () => {
     event = ensureEventId(event);
+    eventBuffer = pruneExpiredEvents(eventBuffer);
     const before = eventBuffer.length;
-    eventBuffer = enqueueBufferedEvent(eventBuffer, event, BUFFER_MAX_SIZE);
+    const liveCapacity = Math.max(0, BUFFER_MAX_SIZE - inflightBuffer.length);
+    eventBuffer = enqueueBufferedEvent(eventBuffer, event, liveCapacity);
     // enqueueBufferedEvent drops the oldest when the cap is hit; a dedupe
     // replacement keeps length flat and is not an eviction.
-    if (eventBuffer.length <= before && before >= BUFFER_MAX_SIZE) {
+    if (eventBuffer.length <= before && before >= liveCapacity) {
       console.warn(
         "[OpenBiliClaw] Buffer full, evicted oldest event to stay within",
         String(BUFFER_MAX_SIZE),
@@ -369,12 +389,13 @@ export function takeBufferedEvents(): BehaviorEvent[] {
 
 /** Re-buffer a failed flush's events at the front (matches the pre-persistence unshift). */
 export function requeueEvents(events: BehaviorEvent[]): void {
-  eventBuffer = dedupeByEventId([
+  eventBuffer = pruneExpiredEvents(dedupeByEventId([
     ...events.map((event) => ensureEventId(event)),
     ...eventBuffer,
-  ]);
-  if (eventBuffer.length > BUFFER_MAX_SIZE) {
-    eventBuffer = eventBuffer.slice(eventBuffer.length - BUFFER_MAX_SIZE);
+  ]));
+  const liveCapacity = Math.max(0, BUFFER_MAX_SIZE - inflightBuffer.length);
+  if (eventBuffer.length > liveCapacity) {
+    eventBuffer = eventBuffer.slice(eventBuffer.length - liveCapacity);
   }
 }
 
@@ -450,7 +471,10 @@ export async function drainParkedEvents(): Promise<BehaviorEvent[]> {
       await storageRemove(PARKED_KEY);
       return [];
     }
-    const capacity = Math.max(0, BUFFER_MAX_SIZE - eventBuffer.length);
+    const capacity = Math.max(
+      0,
+      BUFFER_MAX_SIZE - inflightBuffer.length - eventBuffer.length,
+    );
     const selected = fresh.slice(0, capacity);
     const selectedIds = new Set(
       selected.map((entry) => entry.event.event_id ?? ""),

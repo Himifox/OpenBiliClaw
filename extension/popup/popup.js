@@ -47,6 +47,11 @@ import {
   createOfflineBackendPoller,
 } from "./popup-connection-poller.js";
 import {
+  clearCachedProfileSnapshot,
+  readCachedProfileSnapshot,
+  writeCachedProfileSnapshot,
+} from "./popup-profile-cache.js";
+import {
   buildInitChecklist,
   describeInitFailure,
   describeInitReason,
@@ -192,6 +197,8 @@ const state = {
   hasMoreRecommendations: true,
   profile: null,
   profileLoaded: false,
+  profileFromCache: false,
+  profileCachedAt: 0,
   profileCognitionHistory: {
     items: [],
     hasMore: false,
@@ -309,6 +316,7 @@ const elements = {
   profileEmpty: document.getElementById("profileEmpty"),
   profileEmptyTitle: document.getElementById("profileEmptyTitle"),
   profileEmptyText: document.getElementById("profileEmptyText"),
+  profileCacheNotice: document.getElementById("profileCacheNotice"),
   profileCard: document.getElementById("profileCard"),
   profileEditBar: document.getElementById("profileEditBar"),
   profileEditToggle: document.getElementById("profileEditToggle"),
@@ -3005,6 +3013,7 @@ function connectRuntimeStream() {
         );
         scheduleRecommendationsRefresh({ delayMs: 0 });
         scheduleDialogueConfirmationRefresh();
+        void loadProfileSummary({ force: true });
       }
     },
     onDisconnect() {
@@ -5022,6 +5031,23 @@ function renderProfileSummary(summary) {
     return;
   }
 
+  if (elements.profileCacheNotice instanceof HTMLElement) {
+    if (state.profileFromCache && state.profileCachedAt > 0) {
+      const cachedAt = new Date(state.profileCachedAt).toLocaleString("zh-CN", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      elements.profileCacheNotice.textContent =
+        `后端未连接，当前显示 ${cachedAt} 保存的画像；新的浏览行为会在恢复连接后同步。`;
+      elements.profileCacheNotice.hidden = false;
+    } else {
+      elements.profileCacheNotice.hidden = true;
+      elements.profileCacheNotice.textContent = "";
+    }
+  }
+
   if (!summary.initialized) {
     elements.profileCard.hidden = true;
     elements.profileEmpty.hidden = false;
@@ -5077,7 +5103,7 @@ function renderProfileSummary(summary) {
   // Signals
   renderActiveInsights(elements.profileActiveInsights, summary.active_insights);
   renderRecentAwareness(elements.profileRecentAwareness, summary.recent_awareness);
-  syncProfileEditChrome(true);
+  syncProfileEditChrome(!state.profileFromCache);
 }
 
 // ── Editable profile (Phase 2) ──────────────────────────────────────────
@@ -7232,7 +7258,12 @@ function renderRecommendationState(stateShape) {
 async function loadProfileSummary({ force = false } = {}) {
   if (!shouldFetchProfileSummary({ online: state.online, profileLoaded: state.profileLoaded, force })) {
     if (!state.online) {
-      renderProfileSummary(normalizeProfileSummary({ initialized: false }));
+      const restored = await restoreCachedProfileSummary();
+      if (!restored) {
+        state.profileFromCache = false;
+        state.profileCachedAt = 0;
+        renderProfileSummary(normalizeProfileSummary({ initialized: false }));
+      }
     } else if (state.profile) {
       // Cached path: still hydrate inbox so reopening popup with a
       // warm profile cache still surfaces the active speculations.
@@ -7244,19 +7275,35 @@ async function loadProfileSummary({ force = false } = {}) {
 
   try {
     const summary = normalizeProfileSummary(await fetchProfileSummary({ limit: 3 }));
+    const backendOrigin = await getBackendOrigin();
     state.profile = summary;
+    state.profileFromCache = false;
+    state.profileCachedAt = 0;
     state.profileCognitionHistory = buildNextCognitionHistoryState(null, summary);
     state.expandedCognitionIndex = null;
+    try {
+      if (summary.initialized) {
+        await writeCachedProfileSnapshot(summary, backendOrigin);
+      } else {
+        await clearCachedProfileSnapshot();
+      }
+    } catch {
+      // A storage quota or browser shutdown must not hide the live profile.
+    }
   } catch {
-    state.profile = normalizeProfileSummary({ initialized: false });
-    state.profileCognitionHistory = {
-      items: [],
-      hasMore: false,
-      nextCursor: "",
-      loadingMore: false,
-      loadMoreError: "",
-    };
-    state.expandedCognitionIndex = null;
+    if (!(await restoreCachedProfileSummary())) {
+      state.profile = normalizeProfileSummary({ initialized: false });
+      state.profileFromCache = false;
+      state.profileCachedAt = 0;
+      state.profileCognitionHistory = {
+        items: [],
+        hasMore: false,
+        nextCursor: "",
+        loadingMore: false,
+        loadMoreError: "",
+      };
+      state.expandedCognitionIndex = null;
+    }
   }
   // Hydrate after every successful or fallback profile load so the
   // inbox stays in sync with the speculator state (the backend dedupes
@@ -7266,6 +7313,26 @@ async function loadProfileSummary({ force = false } = {}) {
   void syncScopedChatTurns();
   state.profileLoaded = true;
   renderProfileSummary(state.profile);
+}
+
+async function restoreCachedProfileSummary() {
+  try {
+    const snapshot = await readCachedProfileSnapshot(await getBackendOrigin());
+    if (!snapshot) return false;
+    const summary = normalizeProfileSummary(snapshot.profile);
+    if (!summary.initialized) return false;
+    state.profile = summary;
+    state.profileFromCache = true;
+    state.profileCachedAt = snapshot.cached_at;
+    state.profileCognitionHistory = buildNextCognitionHistoryState(null, summary);
+    state.expandedCognitionIndex = null;
+    state.profileLoaded = true;
+    hydrateInboxFromProfile(summary);
+    renderProfileSummary(summary);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function hydrateInboxFromProfile(profile) {
