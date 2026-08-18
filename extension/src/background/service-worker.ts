@@ -21,6 +21,7 @@ import {
   enqueueEventWithDurableAck,
   getBufferLength,
   parkEvents,
+  recordLastSuccessfulSync,
   recoverParkedEventsForFlush,
   shouldFlushImmediately,
 } from "./buffer.js";
@@ -525,56 +526,60 @@ async function flushEvents(): Promise<void> {
   if (eventFlushInProgress) return;
   eventFlushInProgress = true;
   try {
-  await bufferReady();
-  if (getBufferLength() === 0) return;
+    await bufferReady();
+    while (getBufferLength() > 0) {
+      const events = await claimBufferedEventsForFlush();
+      if (events.length === 0) return;
 
-  const events = await claimBufferedEventsForFlush();
-  if (events.length === 0) return;
+      try {
+        const response = await authenticatedFetch(await apiUrl("/events"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ events }),
+        });
 
-  try {
-    const response = await authenticatedFetch(await apiUrl("/events"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ events }),
-    });
-
-    if (!response.ok) {
-      console.warn("[OpenBiliClaw] Backend returned", response.status);
-      // Keep INFLIGHT_KEY intact. The next alarm or worker restart retries the
-      // exact same event IDs; merging into the capped live buffer could evict
-      // an older fact.
-      return;
-    }
-    let uninitialized = false;
-    try {
-      // Pre-init the backend consumes-and-drops events (200 + rejected:
-      // not_initialized). Instead of dropping browsing-behavior events
-      // (dwell/click/scroll) that init can never refetch, park them and drain
-      // once the backend reports initialized.
-      uninitialized = flushResponseReportsUninitialized(await response.json());
-    } catch {
-      // Non-JSON response — nothing to inspect.
-    }
-    if (uninitialized) {
-      if (!backendUninitialized) {
-        backendUninitialized = true;
-        renderActionBadge();
+        if (!response.ok) {
+          console.warn("[OpenBiliClaw] Backend returned", response.status);
+          // Keep INFLIGHT_KEY intact. The next alarm or worker restart retries
+          // the exact same event IDs.
+          return;
+        }
+        let uninitialized = false;
+        try {
+          // Pre-init the backend consumes-and-drops events (200 + rejected:
+          // not_initialized). Preserve them until initialization completes.
+          uninitialized = flushResponseReportsUninitialized(await response.json());
+        } catch {
+          // Non-JSON response — nothing to inspect.
+        }
+        if (uninitialized) {
+          if (!backendUninitialized) {
+            backendUninitialized = true;
+            renderActionBadge();
+          }
+          if (await parkEvents(events)) {
+            await completeInflightEvents();
+            console.debug("[OpenBiliClaw] Events parked: backend not initialized yet");
+          } else {
+            return;
+          }
+        } else {
+          await completeInflightEvents();
+          await recordLastSuccessfulSync().catch(() => {
+            console.warn("[OpenBiliClaw] Could not persist last sync timestamp");
+          });
+          // Publish parked work ahead of newer live events. Each successful
+          // batch immediately advances to the next instead of waiting for
+          // another alarm, so a full offline outbox catches up promptly.
+          await drainParkedEvents();
+        }
+        await checkPendingNotification();
+      } catch {
+        console.warn("[OpenBiliClaw] Backend not available, buffering events");
+        // The durable inflight owner remains intact for retry.
+        return;
       }
-      if (await parkEvents(events)) {
-        await completeInflightEvents();
-        console.debug("[OpenBiliClaw] Events parked: backend not initialized yet");
-      }
-    } else {
-      await completeInflightEvents();
-      // drainParkedEvents durably writes one chunk into the live mirror before
-      // shortening the parked key, so MV3 recycling can only duplicate it.
-      await drainParkedEvents();
     }
-    await checkPendingNotification();
-  } catch {
-    console.warn("[OpenBiliClaw] Backend not available, buffering events");
-    // The durable inflight owner remains intact for retry.
-  }
   } finally {
     eventFlushInProgress = false;
   }

@@ -5,8 +5,11 @@ import { resolve } from "node:path";
 
 import {
   BUFFER_MAX_SIZE,
+  EVENT_TTL_MS,
   EVENT_BUFFER_KEY,
+  FLUSH_BATCH_SIZE,
   INFLIGHT_KEY,
+  LAST_SYNC_KEY,
   PARKED_KEY,
   PARKED_MAX,
   bufferReady,
@@ -19,6 +22,8 @@ import {
   parkEvents,
   persistBuffer,
   prependBufferedEvents,
+  pruneExpiredEvents,
+  recordLastSuccessfulSync,
   recoverParkedEventsForFlush,
   takeBufferedEvents,
   __resetBufferForTests,
@@ -411,11 +416,11 @@ test("parkEvents enforces the FIFO cap, dropping the oldest parked events", asyn
   }
 });
 
-test("drainParkedEvents drops entries older than the 48h TTL", async () => {
+test("drainParkedEvents drops entries older than the 30-day TTL", async () => {
   const stub = installStorageStub();
   __resetBufferForTests();
   try {
-    const stale = { parkedAt: Date.now() - 49 * 3_600_000, event: makeEvent("click", "https://x/stale") };
+    const stale = { parkedAt: Date.now() - EVENT_TTL_MS - 1, event: makeEvent("click", "https://x/stale") };
     const fresh = { parkedAt: Date.now(), event: makeEvent("click", "https://x/fresh") };
     stub.store.set(PARKED_KEY, [stale, fresh]);
 
@@ -428,6 +433,93 @@ test("drainParkedEvents drops entries older than the 48h TTL", async () => {
     stub.restore();
     __resetBufferForTests();
   }
+});
+
+test("claimBufferedEventsForFlush limits each delivery batch and preserves the remainder", async () => {
+  const stub = installStorageStub();
+  __resetBufferForTests();
+  try {
+    for (let i = 0; i < FLUSH_BATCH_SIZE + 25; i += 1) {
+      await enqueueEvent(makeEvent("view", `https://x/batch/${i}`));
+    }
+    const first = await claimBufferedEventsForFlush();
+    assert.equal(first.length, FLUSH_BATCH_SIZE);
+    assert.equal((stub.store.get(EVENT_BUFFER_KEY) as BehaviorEvent[]).length, 25);
+    await completeInflightEvents();
+    const second = await claimBufferedEventsForFlush();
+    assert.equal(second.length, 25);
+  } finally {
+    stub.restore();
+    __resetBufferForTests();
+  }
+});
+
+test("live, inflight, and parked storage share one distinct 1000-event capacity", async () => {
+  const stub = installStorageStub();
+  const warn = captureWarnings();
+  __resetBufferForTests();
+  try {
+    const parked = Array.from({ length: 800 }, (_, i) => {
+      const event = makeEvent("click", `https://x/parked/${i}`);
+      event.timestamp -= 10_000;
+      return event;
+    });
+    await parkEvents(parked);
+    for (let i = 0; i < 400; i += 1) {
+      await enqueueEvent(makeEvent("view", `https://x/live/${i}`));
+    }
+
+    const live = stub.store.get(EVENT_BUFFER_KEY) as BehaviorEvent[];
+    const durableParked = stub.store.get(PARKED_KEY) as Array<{ event: BehaviorEvent }>;
+    const inflight = (stub.store.get(INFLIGHT_KEY) as BehaviorEvent[] | undefined) ?? [];
+    const ids = new Set([
+      ...live.map((event) => event.event_id),
+      ...durableParked.map((entry) => entry.event.event_id),
+      ...inflight.map((event) => event.event_id),
+    ]);
+    assert.equal(ids.size, BUFFER_MAX_SIZE);
+    assert.equal(live.length, 400, "newer live events survive bounded eviction");
+    assert.equal(durableParked.length, 600, "oldest parked events are evicted first");
+  } finally {
+    warn.restore();
+    stub.restore();
+    __resetBufferForTests();
+  }
+});
+
+test("pruneExpiredEvents keeps fresh and legacy timestamp rows", () => {
+  const now = Date.now();
+  const stale = makeEvent("view", "https://x/stale-live");
+  stale.timestamp = now - EVENT_TTL_MS - 1;
+  const fresh = makeEvent("view", "https://x/fresh-live");
+  fresh.timestamp = now;
+  const legacy = makeEvent("view", "https://x/legacy-live");
+  legacy.timestamp = 0;
+  assert.deepEqual(
+    pruneExpiredEvents([stale, fresh, legacy], now).map((event) => event.url),
+    ["https://x/fresh-live", "https://x/legacy-live"],
+  );
+});
+
+test("successful delivery timestamp is persisted as ISO-8601", async () => {
+  const stub = installStorageStub();
+  __resetBufferForTests();
+  try {
+    const now = new Date("2026-08-18T08:00:00.000Z");
+    assert.equal(await recordLastSuccessfulSync(now), now.toISOString());
+    assert.equal(stub.store.get(LAST_SYNC_KEY), now.toISOString());
+  } finally {
+    stub.restore();
+    __resetBufferForTests();
+  }
+});
+
+test("service worker drains successive batches and records accepted sync time", () => {
+  const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
+  const flush = source.slice(source.indexOf("async function flushEvents"), source.indexOf("function ensureFlushAlarm"));
+  assert.match(flush, /while \(getBufferLength\(\) > 0\)/);
+  assert.match(flush, /await recordLastSuccessfulSync\(\)/);
+  assert.match(flush, /await drainParkedEvents\(\)/);
 });
 
 test("the combined buffer never exceeds BUFFER_MAX_SIZE and evictions are logged", async () => {

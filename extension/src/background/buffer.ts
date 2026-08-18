@@ -29,12 +29,18 @@ export const EVENT_BUFFER_KEY = "obc_event_buffer";
 export const INFLIGHT_KEY = "obc_event_inflight";
 /** chrome.storage.local key holding events parked while the backend is uninitialized. */
 export const PARKED_KEY = "obc_parked_events";
-/** Bounds in-memory + mirrored buffer growth when the backend is down for days. */
-export const BUFFER_MAX_SIZE = 50;
+/** Last backend acknowledgement observed by the extension. */
+export const LAST_SYNC_KEY = "obc_last_sync_at";
+/** Bounds the durable offline outbox without exhausting storage.local quota. */
+export const BUFFER_MAX_SIZE = 1_000;
+/** Keep individual HTTP requests small while a long offline backlog catches up. */
+export const FLUSH_BATCH_SIZE = 100;
+/** Browsing facts older than this no longer contribute useful current-profile signal. */
+export const EVENT_TTL_MS = 30 * 24 * 3_600_000;
 /** Parking lot cap; oldest parked events are FIFO-evicted past this. */
-export const PARKED_MAX = 500;
+export const PARKED_MAX = BUFFER_MAX_SIZE;
 /** Parked events older than this are dropped on read. */
-export const PARKED_TTL_MS = 48 * 3_600_000;
+export const PARKED_TTL_MS = EVENT_TTL_MS;
 
 interface ParkedEntry {
   parkedAt: number;
@@ -132,8 +138,20 @@ async function storageRemove(key: string): Promise<void> {
 
 function asEventArray(value: unknown): BehaviorEvent[] {
   return Array.isArray(value)
-    ? (value as BehaviorEvent[]).map((event) => ensureEventId(event))
+    ? pruneExpiredEvents((value as BehaviorEvent[]).map((event) => ensureEventId(event)))
     : [];
+}
+
+/** Drop expired persisted facts while preserving legacy rows without a valid timestamp. */
+export function pruneExpiredEvents(
+  events: BehaviorEvent[],
+  now = Date.now(),
+): BehaviorEvent[] {
+  const cutoff = now - EVENT_TTL_MS;
+  return events.filter((event) => {
+    const timestamp = Number(event?.timestamp);
+    return !Number.isFinite(timestamp) || timestamp <= 0 || timestamp >= cutoff;
+  });
 }
 
 function newEventId(): string {
@@ -182,11 +200,54 @@ function dedupeByEventId(events: BehaviorEvent[]): BehaviorEvent[] {
   return result;
 }
 
+function eventOrderTimestamp(event: BehaviorEvent, fallback = 0): number {
+  const timestamp = Number(event?.timestamp);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : fallback;
+}
+
+/** Keep the newest distinct eligible events while preserving inflight ownership. */
+function trimDurableQueues(
+  live: BehaviorEvent[],
+  parked: ParkedEntry[],
+  inflight: BehaviorEvent[],
+): { live: BehaviorEvent[]; parked: ParkedEntry[]; evicted: number } {
+  const protectedIds = new Set(inflight.map((event) => ensureEventId(event).event_id ?? ""));
+  const candidates = new Map<string, number>();
+
+  for (const event of live) {
+    const eventId = ensureEventId(event).event_id ?? "";
+    if (!eventId || protectedIds.has(eventId) || candidates.has(eventId)) continue;
+    candidates.set(eventId, eventOrderTimestamp(event));
+  }
+  for (const entry of parked) {
+    const eventId = ensureEventId(entry.event).event_id ?? "";
+    if (!eventId || protectedIds.has(eventId) || candidates.has(eventId)) continue;
+    candidates.set(eventId, eventOrderTimestamp(entry.event, entry.parkedAt));
+  }
+
+  const capacity = Math.max(0, BUFFER_MAX_SIZE - protectedIds.size);
+  const ordered = [...candidates.entries()].sort(
+    ([, left], [, right]) => left - right,
+  );
+  const keptIds = new Set(ordered.slice(Math.max(0, ordered.length - capacity)).map(([id]) => id));
+  const evicted = Math.max(0, ordered.length - capacity);
+
+  return {
+    live: live.filter((event) => keptIds.has(ensureEventId(event).event_id ?? "")),
+    parked: parked.filter((entry) => {
+      const eventId = ensureEventId(entry.event).event_id ?? "";
+      return protectedIds.has(eventId) || keptIds.has(eventId);
+    }),
+    evicted,
+  };
+}
+
 async function restoreBuffer(): Promise<void> {
   try {
-    const [stored, storedInflight] = await Promise.all([
+    const [stored, storedInflight, storedParked] = await Promise.all([
       storageGet<BehaviorEvent[]>(EVENT_BUFFER_KEY),
       storageGet<BehaviorEvent[]>(INFLIGHT_KEY),
+      storageGet<ParkedEntry[]>(PARKED_KEY),
     ]);
     // An inflight batch stays a distinct durable owner and is retried before
     // live events. Normalizing legacy rows may create event_id values, so both
@@ -197,12 +258,18 @@ async function restoreBuffer(): Promise<void> {
       ...inflightBuffer,
     ]);
     eventBuffer = dedupeByEventId([...asEventArray(stored), ...eventBuffer]);
-    if (eventBuffer.length > BUFFER_MAX_SIZE) {
-      eventBuffer = eventBuffer.slice(eventBuffer.length - BUFFER_MAX_SIZE);
-    }
+    const parked = Array.isArray(storedParked)
+      ? storedParked.filter(
+        (entry) => entry && typeof entry.parkedAt === "number"
+          && entry.parkedAt >= Date.now() - PARKED_TTL_MS,
+      ).map((entry) => ({ ...entry, event: ensureEventId(entry.event) }))
+      : [];
+    const trimmed = trimDurableQueues(eventBuffer, parked, inflightBuffer);
+    eventBuffer = trimmed.live;
     await storageSet({
       [EVENT_BUFFER_KEY]: eventBuffer,
       [INFLIGHT_KEY]: inflightBuffer,
+      [PARKED_KEY]: trimmed.parked,
     });
   } catch (err) {
     console.warn(
@@ -256,13 +323,14 @@ export async function claimBufferedEventsForFlush(): Promise<BehaviorEvent[]> {
   return withBufferMutation(async () => {
     if (inflightBuffer.length > 0) return [...inflightBuffer];
     if (eventBuffer.length === 0) return [];
-    const claimed = eventBuffer;
+    const claimed = eventBuffer.slice(0, FLUSH_BATCH_SIZE);
+    const remaining = eventBuffer.slice(claimed.length);
     await storageSet({
       [INFLIGHT_KEY]: claimed,
-      [EVENT_BUFFER_KEY]: [],
+      [EVENT_BUFFER_KEY]: remaining,
     });
     inflightBuffer = claimed;
-    eventBuffer = [];
+    eventBuffer = remaining;
     return [...inflightBuffer];
   });
 }
@@ -281,6 +349,13 @@ export async function completeInflightEvents(): Promise<void> {
   });
 }
 
+/** Record a successful backend acknowledgement for the compact popup status. */
+export async function recordLastSuccessfulSync(now = new Date()): Promise<string> {
+  const timestamp = now.toISOString();
+  await storageSet({ [LAST_SYNC_KEY]: timestamp });
+  return timestamp;
+}
+
 /**
  * Enqueue an event (gated on restore), then await the mirror write so a strong
  * signal is on disk even if the service worker dies mid-flush. Returns the new
@@ -290,18 +365,23 @@ export async function enqueueEvent(event: BehaviorEvent): Promise<number> {
   await bufferReady();
   return withBufferMutation(async () => {
     event = ensureEventId(event);
-    const before = eventBuffer.length;
-    eventBuffer = enqueueBufferedEvent(eventBuffer, event, BUFFER_MAX_SIZE);
-    // enqueueBufferedEvent drops the oldest when the cap is hit; a dedupe
-    // replacement keeps length flat and is not an eviction.
-    if (eventBuffer.length <= before && before >= BUFFER_MAX_SIZE) {
+    eventBuffer = pruneExpiredEvents(eventBuffer);
+    eventBuffer = enqueueBufferedEvent(eventBuffer, event, Number.MAX_SAFE_INTEGER);
+    const storedParked = await storageGet<ParkedEntry[]>(PARKED_KEY);
+    const parked = Array.isArray(storedParked) ? storedParked : [];
+    const trimmed = trimDurableQueues(eventBuffer, parked, inflightBuffer);
+    eventBuffer = trimmed.live;
+    if (trimmed.evicted > 0) {
       console.warn(
         "[OpenBiliClaw] Buffer full, evicted oldest event to stay within",
         String(BUFFER_MAX_SIZE),
       );
     }
     try {
-      await storageSet({ [EVENT_BUFFER_KEY]: eventBuffer });
+      await storageSet({
+        [EVENT_BUFFER_KEY]: eventBuffer,
+        [PARKED_KEY]: trimmed.parked,
+      });
     } catch (err) {
       console.warn(
         "[OpenBiliClaw] Buffer persist failed (storage), keeping in-memory buffer:",
@@ -369,12 +449,13 @@ export function takeBufferedEvents(): BehaviorEvent[] {
 
 /** Re-buffer a failed flush's events at the front (matches the pre-persistence unshift). */
 export function requeueEvents(events: BehaviorEvent[]): void {
-  eventBuffer = dedupeByEventId([
+  eventBuffer = pruneExpiredEvents(dedupeByEventId([
     ...events.map((event) => ensureEventId(event)),
     ...eventBuffer,
-  ]);
-  if (eventBuffer.length > BUFFER_MAX_SIZE) {
-    eventBuffer = eventBuffer.slice(eventBuffer.length - BUFFER_MAX_SIZE);
+  ]));
+  const liveCapacity = Math.max(0, BUFFER_MAX_SIZE - inflightBuffer.length);
+  if (eventBuffer.length > liveCapacity) {
+    eventBuffer = eventBuffer.slice(eventBuffer.length - liveCapacity);
   }
 }
 
@@ -393,23 +474,26 @@ export async function parkEvents(events: BehaviorEvent[]): Promise<boolean> {
   await bufferReady();
   return withBufferMutation(async () => {
     try {
-    const now = Date.now();
-    const stored = await storageGet<ParkedEntry[]>(PARKED_KEY);
-    const existing = Array.isArray(stored) ? stored : [];
-    const combined: ParkedEntry[] = [
-      ...existing,
-      ...events.map((event) => ({ parkedAt: now, event: ensureEventId(event) })),
-    ].map((entry) => ({ ...entry, event: ensureEventId(entry.event) }));
-    const seen = new Set<string>();
-    const entries = combined.filter((entry) => {
-      const eventId = entry.event.event_id ?? "";
-      if (seen.has(eventId)) return false;
-      seen.add(eventId);
-      return true;
-    });
-    const trimmed =
-      entries.length > PARKED_MAX ? entries.slice(entries.length - PARKED_MAX) : entries;
-    await storageSet({ [PARKED_KEY]: trimmed });
+      const now = Date.now();
+      const stored = await storageGet<ParkedEntry[]>(PARKED_KEY);
+      const existing = Array.isArray(stored) ? stored : [];
+      const combined: ParkedEntry[] = [
+        ...existing,
+        ...events.map((event) => ({ parkedAt: now, event: ensureEventId(event) })),
+      ].map((entry) => ({ ...entry, event: ensureEventId(entry.event) }));
+      const seen = new Set<string>();
+      const entries = combined.filter((entry) => {
+        const eventId = entry.event.event_id ?? "";
+        if (seen.has(eventId)) return false;
+        seen.add(eventId);
+        return true;
+      });
+      const bounded = trimDurableQueues(eventBuffer, entries, inflightBuffer);
+      eventBuffer = bounded.live;
+      await storageSet({
+        [EVENT_BUFFER_KEY]: eventBuffer,
+        [PARKED_KEY]: bounded.parked,
+      });
       return true;
     } catch (err) {
       console.warn(
@@ -433,41 +517,44 @@ export async function drainParkedEvents(): Promise<BehaviorEvent[]> {
   await bufferReady();
   return withBufferMutation(async () => {
     try {
-    const stored = await storageGet<ParkedEntry[]>(PARKED_KEY);
-    if (!Array.isArray(stored) || stored.length === 0) return [];
-    const cutoff = Date.now() - PARKED_TTL_MS;
-    const fresh = stored
-      .filter(
-        (entry) => entry && typeof entry.parkedAt === "number" && entry.parkedAt >= cutoff,
-      )
-      .map((entry) => ({ ...entry, event: ensureEventId(entry.event) }));
-    // Publish generated legacy IDs before transferring ownership. If the
-    // worker dies after the subsequent live write but before PARKED is
-    // shortened, startup sees the same IDs and only replays duplicates.
-    if (fresh.length > 0) {
-      await storageSet({ [PARKED_KEY]: fresh });
-    } else {
-      await storageRemove(PARKED_KEY);
-      return [];
-    }
-    const capacity = Math.max(0, BUFFER_MAX_SIZE - eventBuffer.length);
-    const selected = fresh.slice(0, capacity);
-    const selectedIds = new Set(
-      selected.map((entry) => entry.event.event_id ?? ""),
-    );
-    const events = selected.map((entry) => entry.event);
-    if (events.length > 0) {
-      eventBuffer = dedupeByEventId([...events, ...eventBuffer]);
-      await storageSet({ [EVENT_BUFFER_KEY]: eventBuffer });
-    }
-    const remaining = fresh.filter(
-      (entry) => !selectedIds.has(entry.event.event_id ?? ""),
-    );
-    if (remaining.length > 0) {
-      await storageSet({ [PARKED_KEY]: remaining });
-    } else {
-      await storageRemove(PARKED_KEY);
-    }
+      const stored = await storageGet<ParkedEntry[]>(PARKED_KEY);
+      if (!Array.isArray(stored) || stored.length === 0) return [];
+      const cutoff = Date.now() - PARKED_TTL_MS;
+      const fresh = stored
+        .filter(
+          (entry) => entry && typeof entry.parkedAt === "number" && entry.parkedAt >= cutoff,
+        )
+        .map((entry) => ({ ...entry, event: ensureEventId(entry.event) }));
+      // Publish generated legacy IDs before transferring ownership. If the
+      // worker dies after the subsequent live write but before PARKED is
+      // shortened, startup sees the same IDs and only replays duplicates.
+      if (fresh.length > 0) {
+        await storageSet({ [PARKED_KEY]: fresh });
+      } else {
+        await storageRemove(PARKED_KEY);
+        return [];
+      }
+      const capacity = Math.max(
+        0,
+        BUFFER_MAX_SIZE - inflightBuffer.length - eventBuffer.length,
+      );
+      const selected = fresh.slice(0, capacity);
+      const selectedIds = new Set(
+        selected.map((entry) => entry.event.event_id ?? ""),
+      );
+      const events = selected.map((entry) => entry.event);
+      if (events.length > 0) {
+        eventBuffer = dedupeByEventId([...events, ...eventBuffer]);
+        await storageSet({ [EVENT_BUFFER_KEY]: eventBuffer });
+      }
+      const remaining = fresh.filter(
+        (entry) => !selectedIds.has(entry.event.event_id ?? ""),
+      );
+      if (remaining.length > 0) {
+        await storageSet({ [PARKED_KEY]: remaining });
+      } else {
+        await storageRemove(PARKED_KEY);
+      }
       return events;
     } catch (err) {
       console.warn(
