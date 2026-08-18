@@ -197,6 +197,57 @@ def test_fastapi_can_wrap_an_existing_core() -> None:
         create_app(core=core, database=object())
 
 
+def test_core_create_forwards_host_llm_provider_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.api import runtime_context as runtime_context_module
+    from openbiliclaw.config import Config
+
+    provider = object()
+    context = _Context()
+    captured: dict[str, Any] = {}
+
+    def _build(config: Any, **kwargs: Any) -> _Context:
+        captured.update(kwargs)
+        context.config = config
+        return context
+
+    monkeypatch.setattr(runtime_context_module, "build_runtime_context", _build)
+    monkeypatch.setattr(OpenBiliClawCore, "_configure_process_runtime", lambda config: None)
+
+    core = OpenBiliClawCore.create(
+        Config(),
+        llm_provider_overrides={"neko-conversation": provider},  # type: ignore[dict-item]
+    )
+
+    assert core.context is context
+    assert captured["llm_provider_overrides"] == {"neko-conversation": provider}
+
+
+@pytest.mark.asyncio
+async def test_runtime_context_keeps_host_llm_provider_overrides_on_reload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.api.runtime_context import RuntimeContext
+    from openbiliclaw.config import Config
+
+    provider = object()
+    context = RuntimeContext(
+        llm_provider_overrides={"neko-conversation": provider},
+    )
+    captured: list[dict[str, Any]] = []
+
+    def _rebuild(config: Any) -> None:
+        captured.append(dict(context.llm_provider_overrides))
+        context.config = config
+
+    monkeypatch.setattr(context, "_rebuild_components", _rebuild)
+
+    await context.rebuild_from_config(Config())
+
+    assert captured == [{"neko-conversation": provider}]
+
+
 @pytest.mark.asyncio
 async def test_degraded_core_still_wraps_http_without_starting_background_work() -> None:
     from openbiliclaw.api.app import create_app

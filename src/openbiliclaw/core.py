@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 if TYPE_CHECKING:
     from openbiliclaw.api.runtime_context import RuntimeContext
     from openbiliclaw.config import Config
+    from openbiliclaw.llm.base import LLMProvider
     from openbiliclaw.recommendation.engine import Recommendation
     from openbiliclaw.soul.profile import OnionProfile
 
@@ -59,6 +60,7 @@ class OpenBiliClawCore:
         memory_manager: Any | None = None,
         database: Any | None = None,
         event_hub: Any | None = None,
+        llm_provider_overrides: dict[str, LLMProvider] | None = None,
         allow_degraded: bool = True,
     ) -> Self:
         """Build a fully wired Core from configuration and optional adapters."""
@@ -78,6 +80,7 @@ class OpenBiliClawCore:
                 memory_manager=memory_manager,
                 database=database,
                 event_hub=event_hub,
+                llm_provider_overrides=llm_provider_overrides,
             )
         except RegistryBuildError as exc:
             if not allow_degraded:
@@ -87,6 +90,7 @@ class OpenBiliClawCore:
                 memory_manager=memory_manager,
                 database=database,
                 event_hub=event_hub,
+                llm_provider_overrides=llm_provider_overrides,
                 exc=exc,
             )
         return cls(

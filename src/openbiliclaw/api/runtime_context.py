@@ -413,6 +413,9 @@ class RuntimeContext:
     # built runtime for SQLite writes / LLM tokens.
     task_registry: BackgroundTaskRegistry = field(default_factory=BackgroundTaskRegistry)
     llm_concurrency_gate: Any = None
+    # Host-owned providers are stable process integrations. Keep them across
+    # hot reloads so an embedded runtime never falls back to persisted secrets.
+    llm_provider_overrides: dict[str, Any] = field(default_factory=dict)
     pool_inventory_commit_callback: Any = field(init=False, repr=False, compare=False)
     _pool_inventory_commit_subscribers: list[Any] = field(
         default_factory=list,
@@ -736,7 +739,10 @@ class RuntimeContext:
         from openbiliclaw.soul.engine import SoulEngine
 
         # 1. LLM layer (with usage ledger so ``openbiliclaw cost`` has data)
-        new_registry = build_llm_registry(new_config)
+        new_registry = build_llm_registry(
+            new_config,
+            provider_overrides=self.llm_provider_overrides,
+        )
         new_usage_recorder = UsageRecorder(sink=self.database)
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
@@ -2054,6 +2060,7 @@ def build_runtime_context(
     memory_manager: Any | None = None,
     database: Any | None = None,
     event_hub: Any | None = None,
+    llm_provider_overrides: dict[str, Any] | None = None,
 ) -> RuntimeContext:
     """Construct a fully-wired ``RuntimeContext`` from a ``Config``.
 
@@ -2107,6 +2114,7 @@ def build_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        llm_provider_overrides=dict(llm_provider_overrides or {}),
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -2123,6 +2131,7 @@ def build_degraded_runtime_context(
     memory_manager: Any | None = None,
     database: Any | None = None,
     event_hub: Any | None = None,
+    llm_provider_overrides: dict[str, Any] | None = None,
     exc: Exception | None = None,
 ) -> RuntimeContext:
     """Construct a minimal context that can serve config recovery endpoints.
@@ -2185,6 +2194,7 @@ def build_degraded_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        llm_provider_overrides=dict(llm_provider_overrides or {}),
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,
