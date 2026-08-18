@@ -214,6 +214,8 @@ def test_core_create_forwards_host_llm_provider_overrides(
     from openbiliclaw.config import Config
 
     provider = object()
+    def transform(config: Config) -> Config:
+        return config
     context = _Context()
     captured: dict[str, Any] = {}
 
@@ -228,10 +230,12 @@ def test_core_create_forwards_host_llm_provider_overrides(
     core = OpenBiliClawCore.create(
         Config(),
         llm_provider_overrides={"neko-conversation": provider},  # type: ignore[dict-item]
+        host_config_transform=transform,
     )
 
     assert core.context is context
     assert captured["llm_provider_overrides"] == {"neko-conversation": provider}
+    assert captured["host_config_transform"] is transform
 
 
 @pytest.mark.asyncio
@@ -256,6 +260,32 @@ async def test_runtime_context_keeps_host_llm_provider_overrides_on_reload(
     await context.rebuild_from_config(Config())
 
     assert captured == [{"neko-conversation": provider}]
+
+
+@pytest.mark.asyncio
+async def test_runtime_context_reapplies_host_config_transform_on_reload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.api.runtime_context import RuntimeContext
+    from openbiliclaw.config import Config
+
+    disk_config = Config()
+    projected_config = Config()
+    context = RuntimeContext(
+        host_config_transform=lambda config: projected_config if config is disk_config else config,
+    )
+    captured: list[Config] = []
+
+    def _rebuild(config: Config) -> None:
+        captured.append(config)
+        context.config = config
+
+    monkeypatch.setattr(context, "_rebuild_components", _rebuild)
+
+    await context.rebuild_from_config(disk_config)
+
+    assert captured == [projected_config]
+    assert context.config is projected_config
 
 
 @pytest.mark.asyncio

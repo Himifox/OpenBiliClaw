@@ -6,6 +6,11 @@
 
 ## 未发布
 
+- **修复嵌入宿主热重载后模型路由回退**：`OpenBiliClawCore.create()` 新增宿主拥有的
+  `host_config_transform`，在首次构造和每次 `reload()` 原子重建前重新投影活动配置；
+  宿主注入的 Provider 与路由现在共同跨热重载保留，设置保存或来源初始化不再让磁盘中的
+  standalone LLM 配置重新接管调用。
+
 - **NEKO 统一模型与单一说话者契约**：Core 支持宿主注入既有
   `LLMProvider` 并在 `reload()` 后保留，使 NEKO 能动态管理模型路由与
   API Key，而不把凭据写进 OpenBiliClaw 配置。新增非消费式推荐预览与

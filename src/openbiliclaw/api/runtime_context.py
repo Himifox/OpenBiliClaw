@@ -416,6 +416,10 @@ class RuntimeContext:
     # Host-owned providers are stable process integrations. Keep them across
     # hot reloads so an embedded runtime never falls back to persisted secrets.
     llm_provider_overrides: dict[str, Any] = field(default_factory=dict)
+    # Hosts may also own the effective runtime route. Reapply their pure
+    # projection to every disk/API config rebuild so persisted standalone
+    # credentials cannot silently become active after a hot reload.
+    host_config_transform: Any = None
     pool_inventory_commit_callback: Any = field(init=False, repr=False, compare=False)
     _pool_inventory_commit_subscribers: list[Any] = field(
         default_factory=list,
@@ -640,6 +644,9 @@ class RuntimeContext:
         so no endpoint handler can interleave during the attribute-
         assignment sweep.
         """
+        if callable(self.host_config_transform):
+            new_config = self.host_config_transform(new_config)
+
         # Pause/drain the old self-owned queue, then revoke its exact permit
         # before any new worker may register. Construction failure gives the
         # drained old Task a fresh nonce before it resumes.
@@ -2061,6 +2068,7 @@ def build_runtime_context(
     database: Any | None = None,
     event_hub: Any | None = None,
     llm_provider_overrides: dict[str, Any] | None = None,
+    host_config_transform: Any = None,
 ) -> RuntimeContext:
     """Construct a fully-wired ``RuntimeContext`` from a ``Config``.
 
@@ -2071,6 +2079,9 @@ def build_runtime_context(
     from openbiliclaw.memory.manager import MemoryManager
     from openbiliclaw.runtime.events import RuntimeEventHub
     from openbiliclaw.storage.database import Database
+
+    if callable(host_config_transform):
+        config = host_config_transform(config)
 
     # ── Stable components ───────────────────────────────────────────
     created_runtime_database = False
@@ -2115,6 +2126,7 @@ def build_runtime_context(
         memory_manager=memory_manager,
         event_hub=event_hub,
         llm_provider_overrides=dict(llm_provider_overrides or {}),
+        host_config_transform=host_config_transform,
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -2132,6 +2144,7 @@ def build_degraded_runtime_context(
     database: Any | None = None,
     event_hub: Any | None = None,
     llm_provider_overrides: dict[str, Any] | None = None,
+    host_config_transform: Any = None,
     exc: Exception | None = None,
 ) -> RuntimeContext:
     """Construct a minimal context that can serve config recovery endpoints.
@@ -2145,6 +2158,9 @@ def build_degraded_runtime_context(
     from openbiliclaw.runtime.events import RuntimeEventHub
     from openbiliclaw.runtime.updater import AutoUpdateService
     from openbiliclaw.storage.database import Database
+
+    if callable(host_config_transform):
+        config = host_config_transform(config)
 
     created_runtime_database = False
     if database is None:
@@ -2195,6 +2211,7 @@ def build_degraded_runtime_context(
         memory_manager=memory_manager,
         event_hub=event_hub,
         llm_provider_overrides=dict(llm_provider_overrides or {}),
+        host_config_transform=host_config_transform,
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,

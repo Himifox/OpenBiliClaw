@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Self, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from openbiliclaw.api.runtime_context import RuntimeContext
     from openbiliclaw.config import Config
     from openbiliclaw.llm.base import LLMProvider
@@ -61,6 +63,7 @@ class OpenBiliClawCore:
         database: Any | None = None,
         event_hub: Any | None = None,
         llm_provider_overrides: dict[str, LLMProvider] | None = None,
+        host_config_transform: Callable[[Config], Config] | None = None,
         allow_degraded: bool = True,
     ) -> Self:
         """Build a fully wired Core from configuration and optional adapters."""
@@ -81,6 +84,7 @@ class OpenBiliClawCore:
                 database=database,
                 event_hub=event_hub,
                 llm_provider_overrides=llm_provider_overrides,
+                host_config_transform=host_config_transform,
             )
         except RegistryBuildError as exc:
             if not allow_degraded:
@@ -91,8 +95,10 @@ class OpenBiliClawCore:
                 database=database,
                 event_hub=event_hub,
                 llm_provider_overrides=llm_provider_overrides,
+                host_config_transform=host_config_transform,
                 exc=exc,
             )
+        runtime_config = getattr(context, "config", None) or runtime_config
         return cls(
             context,
             config=runtime_config,
@@ -284,9 +290,10 @@ class OpenBiliClawCore:
             resolved_candidate = Path(candidate_data_path).expanduser().resolve()
             if resolved_candidate != self._active_data_path:
                 raise RuntimeError("Changing data_dir requires constructing a new Core")
-        self._configure_process_runtime(config)
         await self.context.rebuild_from_config(config)
-        self._config = config
+        effective_config = getattr(self.context, "config", None) or config
+        self._configure_process_runtime(effective_config)
+        self._config = effective_config
         self.context.degraded = False
         self.context.degraded_reason = ""
         self.context.degraded_issues = []

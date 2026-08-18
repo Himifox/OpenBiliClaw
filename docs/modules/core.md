@@ -29,11 +29,14 @@ The stable host-facing surface is:
 - `context` as an explicit compatibility escape hatch for capabilities not yet
   promoted to the public Core API.
 
-`create()` accepts an existing database, memory manager, event hub, or a mapping
-of `llm_provider_overrides`. Provider overrides implement OpenBiliClaw's existing
-`LLMProvider` protocol, remain host-owned, and survive `reload()`. This lets an
-embedding host resolve its current model route and credentials at call time
-without writing those credentials into OpenBiliClaw configuration. Injected
+`create()` accepts an existing database, memory manager, event hub, a mapping
+of `llm_provider_overrides`, or a host-owned `host_config_transform`. Provider
+overrides implement OpenBiliClaw's existing `LLMProvider` protocol. The
+transform is applied both during construction and before every `reload()`
+rebuild, so a persisted standalone route cannot silently replace the host route
+after a settings save. Together they let an embedding host resolve its current
+model route and credentials at call time without writing those credentials into
+OpenBiliClaw configuration. Injected
 objects remain owned by the host; a database created by Core is closed by Core.
 If the LLM registry cannot be built, the default `allow_degraded=True` creates a
 recovery-capable Core. Set it to `False` when an embedding host prefers startup
@@ -68,7 +71,7 @@ profile, recommendation, and dialogue services stay inside Core.
    `record_recommendation_delivery()`. `[PASS]`, interruption, rejection, and
    delivery failure must not record it as shown.
 6. Call `reload()` after OpenBiliClaw configuration changes; the injected
-   provider mapping remains installed.
+   provider mapping and host configuration transform remain installed.
 7. Stop Core before NEKO closes its event loop.
 
 This is single ownership of model configuration and final speech, not a promise
