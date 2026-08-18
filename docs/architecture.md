@@ -5,10 +5,12 @@
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
-NEKO / embedded host ─ direct async calls ──────────────┐
-LAN clients ─ HTTP（默认）→ listeners → uvicorn/FastAPI adapter ─┤
-public clients ─ HTTPS（可选）→ Caddy → FastAPI adapter ─────────┼→ OpenBiliClawCore → RuntimeContext
-trusted LAN ─ HTTPS（可选）→ TLS Proxy → FastAPI adapter ────────┘
+browser extension → durable outbox (1000 / 30d / batch 100) → loopback FastAPI ─┐
+                    NEKO/Core offline → local cache → automatic replay            │
+NEKO / embedded host → direct async calls ────────────────────────────────────────┤
+LAN clients → HTTP（默认）→ listeners → uvicorn/FastAPI adapter ──────────────────┤
+public clients → HTTPS（可选）→ Caddy → FastAPI adapter ──────────────────────────┼→ OpenBiliClawCore → RuntimeContext
+trusted LAN → HTTPS（可选）→ TLS Proxy → FastAPI adapter ─────────────────────────┘
                                                             ├→ soul / discovery / recommendation / dialogue
                                                             └→ refresh / account-sync / auto-update task ownership
 

@@ -55,3 +55,23 @@ profile, recommendation, and dialogue services stay inside Core.
    that has not yet received a stable façade.
 4. Call `reload()` after NEKO persists a validated configuration.
 5. Stop Core before NEKO closes its event loop.
+
+NEKO does not need to enable its plugin system or MCP for this path. The browser
+extension remains OpenBiliClaw's capture and browser-session layer and keeps
+posting to the unchanged loopback HTTP adapter at `127.0.0.1:8420`. If NEKO is
+closed, the extension retains eligible behavior events locally; once NEKO hosts
+and starts Core again, the extension resumes delivery automatically.
+
+## Compatibility guarantees
+
+- `create()`, `start()`, `stop()`, `reload()`, `get_profile()`, `recommend()`,
+  `chat()`, and `publish_event()` remain the stable public surface.
+- Direct host calls do not loop back through HTTP; FastAPI wraps the same Core.
+- Core owns runtime background tasks, while repeated `start()` / `stop()` and
+  shutdown paths are lifecycle-safe and do not duplicate task ownership.
+- Degraded construction keeps the HTTP recovery/configuration adapter available
+  without starting business background work.
+- A live Core never silently changes its data directory. Persisting a new
+  `data_dir` requires a full stop and a newly constructed Core.
+- The package introduces no NEKO-specific types or dependencies; translating
+  NEKO events and response shapes remains the NEKO-side adapter's responsibility.

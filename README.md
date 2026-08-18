@@ -662,7 +662,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 ┌────────────────────────────────────────────────┐
 │    浏览器插件（Chrome / Firefox / Safari）     │
 │   行为采集 · MAIN-world tap（评论/弹幕·xhs强信号）│
-│   Cookie 同步 · 平台任务 · 连接状态/来源摘要        │
+│ Cookie/任务 · 离线队列（1000条/30天/每批100）·同步状态│
 └──────────────────────┬─────────────────────────┘
                        │ HTTP 默认：IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
                        │ HTTPS 可选：公网 Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → 同一 API
@@ -810,7 +810,7 @@ durable turn → 固定时间/payload → 确认入口（待聊列表/卡片） 
 
 ### 可嵌入后端 Core
 
-后端现在可不经 HTTP 直接嵌入 NEKO 等 Python 宿主：`OpenBiliClawCore` 统一负责运行时构建、后台任务、热重载与资源关闭，并提供画像、推荐、对话和事件发布入口。FastAPI/uvicorn 只是同一 Core 的网络适配层，现有 CLI 与 HTTP 客户端无需改变。最小接入方式与所有权边界见 [Core 模块文档](docs/modules/core.md)。
+后端现在可不经 HTTP 直接嵌入 NEKO 等 Python 宿主：`OpenBiliClawCore` 统一负责运行时构建、后台任务、热重载与资源关闭，并提供画像、推荐、对话和事件发布入口。浏览器插件仍是 OpenBiliClaw 的采集“手脚”；NEKO 关闭时插件把行为事件在本地保留最多 30 天（总上限 1000 条），NEKO 恢复后自动分批补传。该内嵌路径不要求开启 NEKO 插件系统或 MCP；FastAPI/uvicorn 只是同一 Core 的网络适配层，现有 CLI 与 HTTP 客户端无需改变。最小接入方式与所有权边界见 [Core 模块文档](docs/modules/core.md)。
 
 ## 🏗️ 项目结构
 

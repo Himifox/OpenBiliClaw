@@ -658,8 +658,8 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 ┌────────────────────────────────────────────────┐
 │ Browser Extension (Chrome / Firefox / Safari)  │
 │  Behavior capture · MAIN-world taps (comment/  │
-│ danmaku, xhs strong signal) · Cookie · Tasks · │
-│                Connector panel                 │
+│ danmaku, xhs signal) · Cookie/Tasks · durable  │
+│ outbox (1,000 / 30d / batches of 100) · status │
 └──────────────────────┬─────────────────────────┘
                        │ HTTP default: IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
                        │ Optional HTTPS: public Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → same API
@@ -814,7 +814,7 @@ Infers from user behavior:
 
 ### Embeddable Backend Core
 
-The backend can now run inside a Python host such as NEKO without HTTP. `OpenBiliClawCore` owns runtime construction, background tasks, hot reload, and resource shutdown, while exposing profile, recommendation, dialogue, and event operations. FastAPI/uvicorn is an adapter around the same Core, so existing CLI and HTTP clients remain compatible. See the [Core module documentation](docs/modules/core.md) for the minimal integration and ownership contract.
+The backend can now run inside a Python host such as NEKO without HTTP. `OpenBiliClawCore` owns runtime construction, background tasks, hot reload, and resource shutdown, while exposing profile, recommendation, dialogue, and event operations. The browser extension remains OpenBiliClaw's capture layer: while NEKO is closed it keeps eligible behavior events locally for up to 30 days (1,000 total), then replays them in batches after NEKO returns. This embedded path does not require NEKO's plugin system or MCP. FastAPI/uvicorn remains an adapter around the same Core, so existing CLI and HTTP clients remain compatible. See the [Core module documentation](docs/modules/core.md) for the minimal integration and ownership contract.
 
 ## 🏗️ Project Structure
 

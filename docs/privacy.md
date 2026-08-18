@@ -1,7 +1,7 @@
 # OpenBiliClaw 隐私权政策
 
 生效日期：2026-05-31
-更新日期：2026-08-09
+更新日期：2026-08-18
 
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do 等受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问 Bilibili、小红书、抖音、YouTube、V2EX 等受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。
@@ -57,6 +57,8 @@ OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有�
 ## 本地存储与保留
 
 插件会使用浏览器的本地扩展存储保存设置、连接状态、缓存配置和 UI 状态。OpenBiliClaw 后端会在用户本机或自托管环境中保存配置文件、SQLite 数据库、日志和画像文件。
+
+后端（包括由 NEKO 托管的 Core）不可用时，插件会把尚未确认的行为事件保存在浏览器扩展本地存储中。live、inflight 和未初始化 parked 三类队列共用最多 1000 条容量，单条最多保留 30 天；超限时淘汰时间最早的事件，过期事件在恢复时清除。恢复连接后每批最多补传 100 条，成功确认后继续下一批；稳定 `event_id` 用于控制重试重复。Popup 只显示三类队列的汇总数量与最近一次成功同步时间，不展示离线画像内容。用户可通过移除插件或清除该扩展的本地数据立即清空这些队列。
 
 用户主动导出的 `.obcbackup` 是**未加密的敏感 ZIP 文件**，可能包含模型 / 来源 API Key、平台 Cookie、画像和浏览 / 推荐历史。包内 manifest 带成员大小与 SHA-256，只用于完整性校验，不提供保密性。导出会合并磁盘 `config.toml` / `config.local.toml`、移除整段 `[api.auth]`，再写成包内单份可移植配置；因此源机的登录密码 / hash、session secret、设备访问 key 及其它 auth 策略不会进入包。导出同时刻意排除日志、旧备份、embedding / 评测 / 临时缓存、证书、自启动文件、OpenBiliClaw Web / 扩展访问会话、外部 CLI 凭据和环境变量值；平台登录 Cookie 则属于明确包含的可移植敏感数据。manifest 的 `source_omitted_environment_variables` 只记录源机当时有值、会影响 OpenBiliClaw 的环境变量名称，包括 `OPENBILICLAW_*`、Gemini 标准 Key 变量及系统代理 / CA 变量；导入端另返回 `target_active_environment_variables`，提示目标环境当前仍可能覆盖导入文件。两个列表都不包含变量值。用户应只在可信设备间传递，并及时删除不再需要的副本。
 
