@@ -125,6 +125,10 @@ async def test_core_runs_without_fastapi_and_owns_lifecycle() -> None:
     assert context.weibo_client.closed is True
     assert context.database.closed is True
 
+    await core.stop()
+
+    assert context.task_registry.cancelled == 1
+
 
 @pytest.mark.asyncio
 async def test_core_reload_rebuilds_and_restarts_running_runtime(
@@ -191,6 +195,32 @@ def test_fastapi_can_wrap_an_existing_core() -> None:
     assert app.state.runtime_context is context
     with pytest.raises(ValueError, match="either core or individual"):
         create_app(core=core, database=object())
+
+
+@pytest.mark.asyncio
+async def test_degraded_core_still_wraps_http_without_starting_background_work() -> None:
+    from openbiliclaw.api.app import create_app
+    from openbiliclaw.api.runtime_context import RuntimeContext
+    from openbiliclaw.config import Config
+
+    context = RuntimeContext(
+        database=object(),
+        memory_manager=object(),
+        soul_engine=object(),
+        config=Config(),
+    )
+    context.degraded = True
+    context.degraded_reason = "host model is not configured"
+    core = OpenBiliClawCore.from_context(context)
+
+    await core.start()
+    app = create_app(core=core, project_stats_service=object())
+
+    assert core.degraded is True
+    assert core.started is False
+    assert app.state.core is core
+    assert app.state.runtime_context is context
+    await core.stop()
 
 
 @pytest.mark.asyncio
