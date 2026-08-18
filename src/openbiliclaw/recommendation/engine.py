@@ -706,6 +706,85 @@ class RecommendationEngine:
                 source_platform=source_platform,
             )
 
+    async def preview(
+        self,
+        profile: SoulProfile,
+        *,
+        limit: int = 3,
+        excluded_bvids: frozenset[str] = frozenset(),
+        source_platform: str = "",
+    ) -> list[Recommendation]:
+        """Rank copy-ready candidates without consuming or recording them."""
+        async with self._serve_lock:
+            result = await self._serve_with_result_unlocked(
+                profile,
+                limit=limit,
+                excluded_bvids=excluded_bvids,
+                expression_mode="precomputed",
+                source_platform=source_platform,
+                consume=False,
+            )
+        return result.items
+
+    async def record_delivery(
+        self,
+        recommendation: Recommendation,
+        *,
+        surface: str = "embedded",
+    ) -> int:
+        """Atomically consume one preview only after its host delivers it."""
+        item = recommendation.content
+        bvid = str(item.bvid or "").strip()
+        if not bvid:
+            return 0
+        row = {
+            "bvid": bvid,
+            "item_key": item.item_key,
+            "expression": recommendation.expression,
+            "topic": recommendation.topic_label,
+            "confidence": recommendation.confidence,
+            "presented": 1,
+        }
+        async with self._serve_lock:
+            persist = getattr(self._database, "persist_pool_serve_async", None)
+            if callable(persist):
+                result = await persist([row], [bvid])
+                ids = list(result.recommendation_ids)
+                committed_raw = getattr(result, "committed_bvids", None)
+                committed = (
+                    (bvid,) if committed_raw is None and ids else tuple(committed_raw or ())
+                )
+                if not ids or bvid not in committed:
+                    return 0
+                recommendation_id = int(ids[0])
+            else:
+                eligible_persist = getattr(
+                    self._database,
+                    "batch_insert_eligible_recommendations_and_mark_shown",
+                    None,
+                )
+                if callable(eligible_persist):
+                    result = await asyncio.to_thread(eligible_persist, [row], [bvid])
+                    ids = list(result.recommendation_ids)
+                else:
+                    ids = await asyncio.to_thread(
+                        self._database.batch_insert_recommendations_and_mark_shown,
+                        [row],
+                        [bvid],
+                    )
+                if not ids:
+                    return 0
+                recommendation_id = int(ids[0])
+            recommendation.recommendation_id = recommendation_id
+            self._last_served_bvids = frozenset({*self._last_served_bvids, bvid})
+            logger.debug(
+                "Recorded recommendation delivery bvid=%s surface=%s",
+                bvid,
+                str(surface or "embedded").strip() or "embedded",
+            )
+            await self._notify_pool_inventory_commit()
+            return recommendation_id
+
     def _enforce_platform_scope(
         self,
         candidates: list[DiscoveredContent],
@@ -755,6 +834,7 @@ class RecommendationEngine:
         excluded_bvids: frozenset[str],
         expression_mode: Literal["realtime", "precomputed"],
         source_platform: str = "",
+        consume: bool = True,
     ) -> ServeResult:
         """Unified recommendation entry point — always picks from the pool.
 
@@ -1056,7 +1136,7 @@ class RecommendationEngine:
                 )
 
         isolated_persist = getattr(self._database, "persist_pool_serve_async", None)
-        if not callable(isolated_persist):
+        if not callable(isolated_persist) or not consume:
             # Legacy and third-party adapters have no writer-locked temporal
             # check. Re-evaluate after all provider awaits and immediately
             # before their history write so a row that expired while realtime
@@ -1076,6 +1156,20 @@ class RecommendationEngine:
                     label,
                     before_fallback_temporal_count - len(ranked),
                 )
+
+        if not consume:
+            return ServeResult(
+                items=recommendations,
+                pool_counts_after={
+                    key: max(0, int(value)) for key, value in pool_readiness.items()
+                },
+                timings=ServeTimings(
+                    pool_snapshot_ms=pool_snapshot_ms,
+                    embedding_ms=_embed_elapsed_ms,
+                    selector_worker_ms=selector_worker_ms,
+                    event_loop_resume_delay_ms=event_loop_resume_delay_ms,
+                ),
+            )
 
         # Critical-path write: one short transaction on the dedicated serve
         # worker inserts history and marks the selected pool rows shown. This

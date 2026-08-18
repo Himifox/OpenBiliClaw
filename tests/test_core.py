@@ -52,8 +52,18 @@ class _Soul:
 
 
 class _Recommendations:
+    def __init__(self) -> None:
+        self.delivered: list[tuple[Any, str]] = []
+
     async def serve(self, profile: Any, **kwargs: Any) -> list[dict[str, Any]]:
         return [{"profile": profile, **kwargs}]
+
+    async def preview(self, profile: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return [{"preview": profile, **kwargs}]
+
+    async def record_delivery(self, recommendation: Any, *, surface: str) -> int:
+        self.delivered.append((recommendation, surface))
+        return 41
 
 
 class _Dialogue:
@@ -288,6 +298,22 @@ async def test_core_exposes_host_facing_operations_without_http() -> None:
             "source_platform": "bilibili",
             "excluded_bvids": frozenset(),
         }
+    ]
+    previews = await core.preview_recommendations(limit=1, source_platform="youtube")
+    assert previews == [
+        {
+            "preview": "profile",
+            "limit": 1,
+            "source_platform": "youtube",
+            "excluded_bvids": frozenset(),
+        }
+    ]
+    assert await core.record_recommendation_delivery(  # type: ignore[arg-type]
+        previews[0],
+        surface="neko_proactive",
+    ) == 41
+    assert context.recommendation_engine.delivered == [
+        (previews[0], "neko_proactive")
     ]
     await core.publish_event({"type": "host.ready"})
     assert context.event_hub.items == [{"type": "host.ready"}]

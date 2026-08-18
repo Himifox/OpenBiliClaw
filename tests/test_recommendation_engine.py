@@ -5815,6 +5815,7 @@ class _SnapshotSpyDB:
     def __init__(self, snapshot: Any) -> None:
         self._snapshot = snapshot
         self.snapshot_kwargs: list[dict[str, Any]] = []
+        self.persist_calls: list[tuple[list[dict[str, Any]], list[str]]] = []
 
     async def load_pool_serve_snapshot_async(self, **kwargs: Any) -> Any:
         self.snapshot_kwargs.append(dict(kwargs))
@@ -5825,6 +5826,7 @@ class _SnapshotSpyDB:
     ) -> Any:
         from openbiliclaw.storage.database import PoolServePersistResult
 
+        self.persist_calls.append((list(items), list(shown_bvids)))
         return PoolServePersistResult(recommendation_ids=tuple(range(1, len(items) + 1)))
 
 
@@ -5915,6 +5917,72 @@ async def test_serve_forwards_canonical_platform_to_snapshot_loader() -> None:
     await engine.serve(_build_profile(), limit=1, source_platform="zh")
 
     assert stub.snapshot_kwargs[0]["source_platform"] == "zhihu"
+
+
+@pytest.mark.asyncio
+async def test_preview_does_not_persist_or_consume_ranked_candidates() -> None:
+    stub = _SnapshotSpyDB(_snapshot_with([_pool_row("BV01", "bilibili")]))
+    llm = _DummyLLM()
+    engine = RecommendationEngine(llm=llm, database=stub)  # type: ignore[arg-type]
+
+    recommendations = await engine.preview(_build_profile(), limit=1)
+
+    assert [item.content.bvid for item in recommendations] == ["BV01"]
+    assert recommendations[0].recommendation_id == 0
+    assert recommendations[0].expression == "BV01 的文案。"
+    assert stub.persist_calls == []
+    assert engine._last_served_bvids == frozenset()
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_record_delivery_consumes_only_the_selected_preview() -> None:
+    stub = _SnapshotSpyDB(
+        _snapshot_with(
+            [_pool_row("BV01", "bilibili"), _pool_row("BV02", "bilibili")]
+        )
+    )
+    engine = RecommendationEngine(llm=_DummyLLM(), database=stub)  # type: ignore[arg-type]
+    recommendations = await engine.preview(_build_profile(), limit=2)
+
+    recommendation_id = await engine.record_delivery(
+        recommendations[1],
+        surface="neko_proactive",
+    )
+
+    assert recommendation_id == 1
+    assert recommendations[1].recommendation_id == 1
+    assert stub.persist_calls == [
+        (
+            [
+                {
+                    "bvid": "BV02",
+                    "item_key": "bilibili:BV02",
+                    "expression": "BV02 的文案。",
+                    "topic": "主题",
+                    "confidence": 0.9,
+                    "presented": 1,
+                }
+            ],
+            ["BV02"],
+        )
+    ]
+    assert engine._last_served_bvids == frozenset({"BV02"})
+
+
+@pytest.mark.asyncio
+async def test_record_delivery_returns_zero_when_preview_is_no_longer_eligible() -> None:
+    stub = _SkippedFinalCommitDB(
+        _snapshot_with([_pool_row("BVCONSUMED", "bilibili")])
+    )
+    engine = RecommendationEngine(llm=_DummyLLM(), database=stub)  # type: ignore[arg-type]
+    recommendation = (await engine.preview(_build_profile(), limit=1))[0]
+
+    recommendation_id = await engine.record_delivery(recommendation)
+
+    assert recommendation_id == 0
+    assert recommendation.recommendation_id == 0
+    assert engine._last_served_bvids == frozenset()
 
 
 @pytest.mark.asyncio

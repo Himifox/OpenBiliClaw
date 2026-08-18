@@ -183,6 +183,39 @@ class OpenBiliClawCore:
             ),
         )
 
+    async def preview_recommendations(
+        self,
+        *,
+        limit: int = 3,
+        source_platform: str = "",
+        excluded_content_ids: frozenset[str] = frozenset(),
+    ) -> list[Recommendation]:
+        """Return ranked recommendations without recording a presentation."""
+        profile = await self.get_profile()
+        return cast(
+            "list[Recommendation]",
+            await self._require_service("recommendation_engine").preview(
+                profile,
+                limit=limit,
+                source_platform=source_platform,
+                excluded_bvids=excluded_content_ids,
+            ),
+        )
+
+    async def record_recommendation_delivery(
+        self,
+        recommendation: Recommendation,
+        *,
+        surface: str = "embedded",
+    ) -> int:
+        """Record a preview after an embedding host actually delivers it."""
+        return int(
+            await self._require_service("recommendation_engine").record_delivery(
+                recommendation,
+                surface=surface,
+            )
+        )
+
     async def chat(self, message: str, *, session: str = "embedded") -> str:
         """Send a direct conversational turn through the current dialogue service."""
         clean_message = message.strip()
