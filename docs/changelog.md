@@ -6,6 +6,13 @@
 
 ## 未发布
 
+- **NEKO 统一模型与单一说话者契约**：Core 支持宿主注入既有
+  `LLMProvider` 并在 `reload()` 后保留，使 NEKO 能动态管理模型路由与
+  API Key，而不把凭据写进 OpenBiliClaw 配置。新增非消费式推荐预览与
+  成功投递确认：预览不调用 LLM、不写展示历史、不消耗候选；NEKO Phase 1
+  选题、Phase 2 生成唯一用户可见台词，只有成功投递才原子记录展示。
+  `core.chat()` 继续服务 Web、CLI 与兼容调用，但不进入 NEKO 正常或主动聊天。
+
 - **统一 NEKO 运行时的插件离线链路**：浏览器插件仍作为 OpenBiliClaw 的采集“手脚”，无需开启 NEKO 插件系统或 MCP；NEKO/Core 未运行时，行为事件以稳定 `event_id` 写入 MV3 持久队列，live/inflight/parked 共用 1000 条、30 天上限并按最旧事件淘汰，恢复后以每批 100 条自动补传。精简 Popup 新增离线缓存数量、补传状态与最近同步时间；Core 的公开嵌入接口和 FastAPI 适配边界由契约测试锁定。
 - **后端收缩为可嵌入 Core**：新增公开 `OpenBiliClawCore`，不启动 FastAPI/uvicorn 即可构建运行时、管理启动/停止/热重载，并直接调用画像、推荐、对话与事件发布；后台 refresh/account-sync/auto-update 任务及运行时资源改由 Core 持有。`create_app(core=...)` 变为 HTTP 适配层，同时默认路径仍自动创建同一 Core，现有 CLI、HTTP 路由和依赖注入入口保持兼容，为后续嵌入 NEKO 提供稳定边界。
 - **浏览器插件收敛为轻量连接器**：side panel / popup 不再重复承载推荐、内容库、画像、对话、guided init 和完整后端配置，只保留后端连接、当前来源识别、11 个来源状态、手动身份同步、主应用入口、端点配置与远程设备配对。后台跨站行为采集、Cookie / 登录态同步和只读来源任务 dispatcher 保持不变；手动同步仅复用既有身份上报，不触发点赞、收藏、关注等上游账号写操作。完整使用体验统一进入桌面 Web `/web`。

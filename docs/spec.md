@@ -288,6 +288,10 @@ browser extension → durable outbox (1000 / 30d / batch 100) → loopback FastA
 NEKO / embedded host → direct async calls ────────────────────────────────────────┤
 HTTP clients → uvicorn / FastAPI adapter ─────────────────────────────────────────┼→ OpenBiliClawCore → RuntimeContext
 CLI server → uvicorn / FastAPI adapter ───────────────────────────────────────────┘        ├→ profile / recommend / chat / events
+
+NEKO conversation route → injected LLMProvider → background profile/evaluation/copy
+canonical recommendation pool → preview(no LLM/no history) → NEKO Phase 1 → Phase 2
+                              → successful delivery only → record shown
                                                                  └→ runtime background-task lifecycle
 
 interactive (dialogue / config probe) ──────────────┐

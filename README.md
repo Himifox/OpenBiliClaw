@@ -29,6 +29,12 @@
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与开放 Web 找内容。
 
+嵌入 NEKO 时，NEKO 统一管理模型路由、API Key 和最终猫娘表达；OpenBiliClaw
+继续负责后台画像、候选评估与结构化推荐。推荐先以不消费候选的预览进入 NEKO
+现有 Phase 1，再由 Phase 2 生成唯一用户可见台词，成功投递后才记录展示；NEKO
+不会在正常聊天或主动聊天中调用 `core.chat()`。这统一的是配置与说话者，并不删除
+OpenBiliClaw 必要的后台模型分析。
+
 | 跨平台 | 本地优先 | 可调教 |
 |---|---|---|
 | B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / Web | 数据默认留在本机 SQLite | 喜欢、不感兴趣、聊天反馈都会改变后续推荐 |

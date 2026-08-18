@@ -24,10 +24,16 @@ The stable host-facing surface is:
 - `reload()` for an atomic swappable-service rebuild;
 - `get_profile()`, `recommend()`, `chat()`, and `publish_event()` for the first
   direct integration operations;
+- `preview_recommendations()` plus `record_recommendation_delivery()` for a
+  two-phase embedded recommendation handoff;
 - `context` as an explicit compatibility escape hatch for capabilities not yet
   promoted to the public Core API.
 
-`create()` accepts an existing database, memory manager, or event hub. Injected
+`create()` accepts an existing database, memory manager, event hub, or a mapping
+of `llm_provider_overrides`. Provider overrides implement OpenBiliClaw's existing
+`LLMProvider` protocol, remain host-owned, and survive `reload()`. This lets an
+embedding host resolve its current model route and credentials at call time
+without writing those credentials into OpenBiliClaw configuration. Injected
 objects remain owned by the host; a database created by Core is closed by Core.
 If the LLM registry cannot be built, the default `allow_degraded=True` creates a
 recovery-capable Core. Set it to `False` when an embedding host prefers startup
@@ -49,12 +55,27 @@ profile, recommendation, and dialogue services stay inside Core.
 
 ## NEKO integration sequence
 
-1. Construct one Core per local OpenBiliClaw data directory.
+1. Construct one Core per local OpenBiliClaw data directory and inject the
+   NEKO-managed provider under the configured OpenBiliClaw instance ID.
 2. Enter its async lifecycle from NEKO's process supervisor.
-3. Call the direct operations above; use `core.context` only for an operation
-   that has not yet received a stable façade.
-4. Call `reload()` after NEKO persists a validated configuration.
-5. Stop Core before NEKO closes its event loop.
+3. Read `preview_recommendations()` before NEKO Phase 1. Preview only reads
+   copy-ready canonical pool rows: it does not refresh sources, call an LLM,
+   write presentation history, or consume a candidate.
+4. Let NEKO's existing Phase 1 choose a candidate and Phase 2 generate the only
+   user-visible character line. Do not call `core.chat()` from NEKO's normal or
+   proactive conversation path.
+5. Only after successful delivery, pass the selected object to
+   `record_recommendation_delivery()`. `[PASS]`, interruption, rejection, and
+   delivery failure must not record it as shown.
+6. Call `reload()` after OpenBiliClaw configuration changes; the injected
+   provider mapping remains installed.
+7. Stop Core before NEKO closes its event loop.
+
+This is single ownership of model configuration and final speech, not a promise
+of one model request for the whole system. OpenBiliClaw may still use the
+NEKO-managed provider for background profile analysis, candidate evaluation,
+and recommendation copy. NEKO alone turns the selected structured candidate
+into user-visible character dialogue.
 
 NEKO does not need to enable its plugin system or MCP for this path. The browser
 extension remains OpenBiliClaw's capture and browser-session layer and keeps
@@ -65,7 +86,8 @@ and starts Core again, the extension resumes delivery automatically.
 ## Compatibility guarantees
 
 - `create()`, `start()`, `stop()`, `reload()`, `get_profile()`, `recommend()`,
-  `chat()`, and `publish_event()` remain the stable public surface.
+  `preview_recommendations()`, `record_recommendation_delivery()`, `chat()`, and
+  `publish_event()` remain the stable public surface.
 - Direct host calls do not loop back through HTTP; FastAPI wraps the same Core.
 - Core owns runtime background tasks, while repeated `start()` / `stop()` and
   shutdown paths are lifecycle-safe and do not duplicate task ownership.

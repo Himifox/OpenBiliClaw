@@ -26,6 +26,14 @@
 
 A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, and the open web — without handing your profile to another platform.
 
+When embedded in NEKO, NEKO owns model routing, API credentials, and the final
+character voice. OpenBiliClaw keeps its background profile analysis, candidate
+evaluation, and structured recommendation work. A non-consuming preview enters
+NEKO's existing Phase 1, Phase 2 generates the only user-visible line, and only
+a successful delivery is recorded as shown. NEKO's normal and proactive chat
+paths do not call `core.chat()`. This unifies configuration and speaker
+ownership; it does not remove necessary background model analysis.
+
 | Cross-platform | Local-first | Trainable |
 |---|---|---|
 | Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / Web | Data stays in your local SQLite by default | Likes, dislikes, and chat feedback shape future recommendations |
