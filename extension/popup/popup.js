@@ -17,6 +17,11 @@ import {
   sourceFromUrl,
   sourcePresentation,
 } from "./popup-state.js";
+import {
+  loadSyncSnapshot,
+  presentSyncStatus,
+  subscribeSyncStorage,
+} from "./popup-sync-status.js";
 
 const elements = {
   backendBadge: document.getElementById("backendBadge"),
@@ -24,6 +29,9 @@ const elements = {
   connectionCard: document.getElementById("connectionCard"),
   connectionTitle: document.getElementById("connectionTitle"),
   connectionDetail: document.getElementById("connectionDetail"),
+  syncHealth: document.getElementById("syncHealth"),
+  syncStatusText: document.getElementById("syncStatusText"),
+  lastSyncText: document.getElementById("lastSyncText"),
   openAppButton: document.getElementById("openAppButton"),
   refreshButton: document.getElementById("refreshButton"),
   currentSourceTitle: document.getElementById("currentSourceTitle"),
@@ -50,7 +58,27 @@ const state = {
   currentSource: null,
   statuses: null,
   refreshInFlight: false,
+  queueCount: 0,
+  lastSyncAt: "",
 };
+
+function renderSyncStatus() {
+  const presentation = presentSyncStatus({
+    online: state.online,
+    queueCount: state.queueCount,
+    lastSyncAt: state.lastSyncAt,
+  });
+  elements.syncHealth.className = `sync-health is-${presentation.tone}`;
+  elements.syncStatusText.textContent = presentation.label;
+  elements.lastSyncText.textContent = presentation.detail;
+}
+
+async function refreshSyncStatus() {
+  const snapshot = await loadSyncSnapshot();
+  state.queueCount = snapshot.queueCount;
+  state.lastSyncAt = snapshot.lastSyncAt;
+  renderSyncStatus();
+}
 
 function setStatusText(element, message, tone = "") {
   if (!element) return;
@@ -61,6 +89,7 @@ function setStatusText(element, message, tone = "") {
 
 function renderBackendStatus(mode, health = null) {
   state.online = mode === "online";
+  renderSyncStatus();
   elements.backendBadge.className = `status-badge is-${mode}`;
   elements.connectionCard.className = `connection-card is-${mode}`;
   elements.openAppButton.disabled = !state.online;
@@ -77,7 +106,7 @@ function renderBackendStatus(mode, health = null) {
   if (mode === "checking") {
     elements.backendBadgeText.textContent = "连接中";
     elements.connectionTitle.textContent = "正在查找本机服务";
-    elements.connectionDetail.textContent = "确认 OpenBiliClaw 后端是否已经启动。";
+    elements.connectionDetail.textContent = "确认 NEKO 中的 OpenBiliClaw Core 是否已经启动。";
     return;
   }
   elements.backendBadgeText.textContent = "未连接";
@@ -306,6 +335,8 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+subscribeSyncStorage(() => void refreshSyncStatus());
+
 initExtLogin(
   {
     deviceKey: document.getElementById("extDeviceKey"),
@@ -321,5 +352,6 @@ initExtLogin(
 renderVersion();
 void loadEndpointForm();
 void detectCurrentSource();
+void refreshSyncStatus();
 void refreshConnectorStatus();
 globalThis.setInterval(() => void refreshConnectorStatus(), 10_000);

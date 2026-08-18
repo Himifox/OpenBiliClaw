@@ -35,7 +35,11 @@
             <h2 id="connectionTitle">正在查找本机服务</h2>
           </div>
         </div>
-        <p id="connectionDetail" class="connection-detail">确认 OpenBiliClaw 后端是否已经启动。</p>
+        <p id="connectionDetail" class="connection-detail">确认 NEKO 中的 OpenBiliClaw Core 是否已经启动。</p>
+        <div id="syncHealth" class="sync-health is-checking" role="status" aria-live="polite">
+          <span id="syncStatusText">正在读取本地缓存</span>
+          <span id="lastSyncText">尚未同步</span>
+        </div>
         <div class="primary-actions">
           <button id="openAppButton" class="button button-primary" type="button" disabled>
             打开主应用

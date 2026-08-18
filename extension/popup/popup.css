@@ -245,7 +245,47 @@ footer {
 
 .connection-detail {
   min-height: 42px;
-  margin: 14px 0 16px;
+  margin: 14px 0 10px;
+}
+
+.sync-health {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-control);
+  padding: 8px 11px;
+  background: var(--surface-subtle);
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sync-health span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-health span:last-child {
+  flex: 0 1 auto;
+  color: var(--ink-muted);
+  font-weight: 600;
+  text-align: right;
+}
+
+.sync-health.is-synced {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.sync-health.is-pending,
+.sync-health.is-cached {
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .primary-actions {

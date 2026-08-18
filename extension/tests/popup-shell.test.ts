@@ -16,6 +16,9 @@ const js = readFileSync(resolve(popupDir, "popup.js"), "utf8");
 test("popup is a compact browser connector, not a duplicate client", () => {
   for (const id of [
     "backendBadge",
+    "syncHealth",
+    "syncStatusText",
+    "lastSyncText",
     "openAppButton",
     "currentSourceTitle",
     "syncButton",
@@ -55,6 +58,7 @@ test("shipped popup source contains only connector dependencies", () => {
     "popup-device-auth.js",
     "popup-ext-login.js",
     "popup-state.js",
+    "popup-sync-status.js",
     "popup.css",
     "popup.html",
     "popup.js",
