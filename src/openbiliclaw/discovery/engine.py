@@ -1229,6 +1229,15 @@ class ContentDiscoveryEngine:
         cache.move_to_end(cache_key)
         while len(cache) > _EVAL_CACHE_MAX_ENTRIES:
             cache.popitem(last=False)
+        try:
+            *_, quality, version = _decode_eval_cache_entry(entry)
+        except (TypeError, ValueError, IndexError):
+            return
+        # Legacy or partially repaired responses remain usable by the
+        # copy-ready recommendation surfaces, but they are not authoritative
+        # enough for the durable exact cache or proactive confidence gate.
+        if quality is None or not math.isfinite(quality) or version != EVALUATION_CONTRACT_VERSION:
+            return
         # Temporal evidence is a verbatim source excerpt. Keep those results
         # memory-only so the durable cache never stores title/body fragments.
         if len(entry) < 19 or str(entry[12] or "").strip():
@@ -2260,8 +2269,11 @@ class ContentDiscoveryEngine:
             if not isinstance(payload, dict):
                 raise ValueError("Expected JSON object from content evaluation")
             validated_score = self._validated_model_score(payload.get("score"))
-            quality_score = self._validated_model_score(payload.get("quality_score"))
-            if validated_score is None or quality_score is None:
+            raw_quality_score = payload.get("quality_score")
+            quality_score = self._validated_model_score(raw_quality_score)
+            if validated_score is None or (
+                raw_quality_score is not None and quality_score is None
+            ):
                 raise ValueError("Expected finite content evaluation score in [0, 1]")
             score = validated_score
             checked_reason = validated_text_field(
@@ -2291,7 +2303,9 @@ class ContentDiscoveryEngine:
 
         content.relevance_score = score
         content.quality_score = quality_score
-        content.evaluation_contract_version = EVALUATION_CONTRACT_VERSION
+        content.evaluation_contract_version = (
+            EVALUATION_CONTRACT_VERSION if quality_score is not None else ""
+        )
         content.relevance_reason = reason
         content.topic_group = topic_group
         content.style_key = style_key
@@ -3528,8 +3542,9 @@ class ContentDiscoveryEngine:
                 continue
             item_result: dict[str, Any] = raw_item
             score = self._validated_model_score(item_result.get("score"))
-            quality_score = self._validated_model_score(item_result.get("quality_score"))
-            if score is None or quality_score is None:
+            raw_quality_score = item_result.get("quality_score")
+            quality_score = self._validated_model_score(raw_quality_score)
+            if score is None or (raw_quality_score is not None and quality_score is None):
                 results.append(None)
                 continue
             checked_reason = validated_text_field(
@@ -3557,7 +3572,9 @@ class ContentDiscoveryEngine:
 
             content.relevance_score = score
             content.quality_score = quality_score
-            content.evaluation_contract_version = EVALUATION_CONTRACT_VERSION
+            content.evaluation_contract_version = (
+                EVALUATION_CONTRACT_VERSION if quality_score is not None else ""
+            )
             content.relevance_reason = reason
             content.topic_group = topic_group
             content.style_key = style_key
