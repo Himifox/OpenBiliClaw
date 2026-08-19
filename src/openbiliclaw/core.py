@@ -7,7 +7,7 @@ import inspect
 from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,6 +67,7 @@ class OpenBiliClawCore:
         event_hub: Any | None = None,
         llm_provider_overrides: dict[str, LLMProvider] | None = None,
         host_config_transform: Callable[[Config], Config] | None = None,
+        surface_copy_mode: Literal["background", "lazy"] = "background",
         allow_degraded: bool = True,
     ) -> Self:
         """Build a fully wired Core from configuration and optional adapters."""
@@ -77,6 +78,8 @@ class OpenBiliClawCore:
         from openbiliclaw.config import load_config
         from openbiliclaw.llm.registry import RegistryBuildError
 
+        if surface_copy_mode not in {"background", "lazy"}:
+            raise ValueError("surface_copy_mode must be 'background' or 'lazy'")
         runtime_config = config or load_config()
         cls._configure_process_runtime(runtime_config)
         owns_database = database is None
@@ -88,6 +91,7 @@ class OpenBiliClawCore:
                 event_hub=event_hub,
                 llm_provider_overrides=llm_provider_overrides,
                 host_config_transform=host_config_transform,
+                surface_copy_mode=surface_copy_mode,
             )
         except RegistryBuildError as exc:
             if not allow_degraded:
@@ -99,6 +103,7 @@ class OpenBiliClawCore:
                 event_hub=event_hub,
                 llm_provider_overrides=llm_provider_overrides,
                 host_config_transform=host_config_transform,
+                surface_copy_mode=surface_copy_mode,
                 exc=exc,
             )
         runtime_config = getattr(context, "config", None) or runtime_config
@@ -182,9 +187,37 @@ class OpenBiliClawCore:
     ) -> list[Recommendation]:
         """Serve recommendations without routing through HTTP."""
         profile = await self.get_profile()
+        engine = self._require_service("recommendation_engine")
+        if getattr(self.context, "surface_copy_mode", "background") == "lazy":
+            recommendations = cast(
+                "list[Recommendation]",
+                await engine.preview_semantic(
+                    profile,
+                    limit=limit,
+                    source_platform=source_platform,
+                    excluded_bvids=excluded_content_ids,
+                ),
+            )
+            delivered: list[Recommendation] = []
+            for recommendation in recommendations:
+                expression, topic = await engine.generate_expression(
+                    recommendation.content,
+                    profile,
+                )
+                recommendation.expression = expression
+                recommendation.topic_label = topic
+                await asyncio.to_thread(
+                    self._require_service("database").update_pool_copy,
+                    recommendation.content.bvid,
+                    expression=expression,
+                    topic_label=topic,
+                )
+                if await engine.record_delivery(recommendation, surface="embedded_lazy"):
+                    delivered.append(recommendation)
+            return delivered
         return cast(
             "list[Recommendation]",
-            await self._require_service("recommendation_engine").serve(
+            await engine.serve(
                 profile,
                 limit=limit,
                 source_platform=source_platform,
@@ -227,7 +260,7 @@ class OpenBiliClawCore:
         profile = await self.get_profile()
         recommendations = cast(
             "list[Recommendation]",
-            await self._require_service("recommendation_engine").preview(
+            await self._require_service("recommendation_engine").preview_semantic(
                 profile,
                 limit=max(0, min(3, int(limit))),
                 source_platform=source_platform,

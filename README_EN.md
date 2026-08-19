@@ -34,7 +34,12 @@ a successful delivery is recorded as shown. NEKO's normal and proactive chat
 paths do not call `core.chat()`. This unifies configuration and speaker
 ownership; it does not remove necessary background model analysis.
 Core applies aggregate-interest and sensitive-topic gates before separating
-tracking, Phase 1 semantics, and Phase 2 expression. Phase 1 sees at most three
+tracking, Phase 1 semantics, and Phase 2 expression. Core may preview and rank
+up to three candidates internally, but the NEKO adapter sends only rank 1 to
+Phase 1, so OBC occupies at most one slot in the total candidate set. Embedded
+NEKO uses `surface_copy_mode="lazy"`, eliminating background duplicate copy
+without moving quality, relevance, temporal, or sensitive-topic decisions out
+of OBC. Phase 2 sees only the selected four-field semantic view.
 bounded candidates; Phase 2 sees only the selected title, topic, summary, and
 selection motive. Full profiles, raw behavior, URLs, and delivery identities do
 not enter either model prompt.

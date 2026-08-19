@@ -273,6 +273,35 @@ class LLMService:
         if self.concurrency_gate is None:
             self.concurrency_gate = LLMConcurrencyGate(self.concurrency)
 
+    def cache_route_namespace(self, caller: str) -> str:
+        """Return a credential-free namespace for exact semantic caches."""
+        routed_chain = self._resolve_module_chain(caller)
+        routed = self._resolve_module_override(caller)
+        names = list(routed_chain)
+        if not names:
+            names = [
+                routed[0]
+                if routed is not None
+                else str(getattr(self.registry, "default_provider", "") or "")
+            ]
+        identities: list[str] = []
+        get_provider = getattr(self.registry, "get", None)
+        for name in names:
+            provider: object | None = None
+            if callable(get_provider):
+                with suppress(Exception):
+                    provider = get_provider(name)
+            dynamic = getattr(provider, "cache_namespace", None)
+            if callable(dynamic):
+                with suppress(Exception):
+                    identities.append(f"{name}:{dynamic()}")
+                    continue
+            identities.append(
+                f"{name}:{type(provider).__module__}.{type(provider).__qualname__}:"
+                f"{getattr(provider, '_model', '')}"
+            )
+        return "|".join(identities)
+
     @asynccontextmanager
     async def _provider_slot(
         self, *, caller: str, bypass_background: bool = False

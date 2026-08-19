@@ -77,8 +77,14 @@ def _recommendation(
             author_name="测试作者",
             content_type="video",
             temporal_class="current",
+            temporal_policy_version="v2",
             temporal_valid_until=temporal_valid_until,
+            temporal_evaluated_at="2026-08-19T00:00:00Z",
+            temporal_evidence_complete=True,
             topic_group=topic,
+            relevance_score=1.0,
+            quality_score=1.0,
+            evaluation_contract_version="content-eval-v7",
         ),
         expression="你昨晚连续看了五个相关视频。",
         topic_label=topic,
@@ -108,6 +114,7 @@ def test_candidate_contract_is_stable_bounded_and_aggregate_only() -> None:
         "long_term_interest",
     )
     assert first.semantics.confidence == 1.0
+    assert first.confidence_components.quality == 1.0
     assert first.policy.why_now_source == "aggregated_interest"
     assert "昨晚" not in repr(first)
 
@@ -190,6 +197,39 @@ def test_sensitive_advice_is_denied_even_with_current_context() -> None:
     ) == []
 
 
+@pytest.mark.parametrize(
+    ("quality", "relevance", "description", "topic", "version", "expected"),
+    [
+        (0.7499, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 0),
+        (0.75, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 1),
+        (1.0, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 1),
+        (None, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 0),
+        (1.0, 1.0, "", "Agent 架构", "content-eval-v7", 0),
+        (1.0, 1.0, "可靠摘要", "", "content-eval-v7", 0),
+        (1.0, 1.0, "可靠摘要", "Agent 架构", "", 0),
+    ],
+)
+def test_candidate_confidence_gate_fails_closed(
+    quality: float | None,
+    relevance: float,
+    description: str,
+    topic: str,
+    version: str,
+    expected: int,
+) -> None:
+    now = datetime(2026, 8, 19, tzinfo=UTC)
+    recommendation = _recommendation(description=description, topic=topic)
+    recommendation.content.quality_score = quality
+    recommendation.content.relevance_score = relevance
+    recommendation.content.evaluation_contract_version = version
+
+    candidates = build_proactive_candidates(
+        [recommendation], profile=_profile(now=now), database=_EvidenceDatabase(), now=now
+    )
+
+    assert len(candidates) == expected
+
+
 def test_database_saved_topic_signal_is_aggregate_only(tmp_path) -> None:
     database = Database(tmp_path / "saved-topic.db")
     database.initialize()
@@ -252,7 +292,9 @@ async def test_core_exposes_bounded_proactive_preview_without_http() -> None:
             return profile
 
     class _Engine:
-        async def preview(self, _profile: object, **kwargs: object) -> list[Recommendation]:
+        async def preview_semantic(
+            self, _profile: object, **kwargs: object
+        ) -> list[Recommendation]:
             preview_calls.append(kwargs)
             return [recommendation]
 

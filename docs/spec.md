@@ -289,10 +289,16 @@ NEKO / embedded host → direct async calls ────────────
 HTTP clients → uvicorn / FastAPI adapter ─────────────────────────────────────────┼→ OpenBiliClawCore → RuntimeContext
 CLI server → uvicorn / FastAPI adapter ───────────────────────────────────────────┘        ├→ profile / recommend / chat / events
 
-NEKO conversation route → injected LLMProvider → background profile/evaluation/copy
+NEKO conversation route → injected LLMProvider → background profile/evaluation
 canonical pool → aggregate signals + sensitive gate → Tracking / Semantics / Policy
-               → NEKO Phase 1(max 3 semantic views) → Phase 2(one 4-field view)
+               → Core ranks max 3 → adapter takes rank 1
+               → NEKO Phase 1(max 1 OBC slot; timing only) → Phase 2(one 4-field view)
                → successful delivery only → Tracking reference → record shown
+
+NEKO host mode fixes `surface_copy_mode=lazy`: background
+`recommendation.write_expression=0`. Proactive admission requires current evaluator contract,
+verified `topic_group`, non-title summary, complete eligible temporal evidence, and
+`min(quality_score,relevance_score,summary_confidence)>=0.75`; unknown data fails closed.
                                                                  └→ runtime background-task lifecycle
 
 interactive (dialogue / config probe) ──────────────┐

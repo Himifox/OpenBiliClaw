@@ -6,6 +6,15 @@
 
 ## 未发布
 
+- **Token 平衡的 NEKO 嵌入链路**：Core 新增默认兼容的
+  `surface_copy_mode="background"|"lazy"`；lazy 不创建/重启 expression-copy owner，主动
+  预览改读独立 semantic-ready 池，公开 Web/CLI/Popup 的 copy-ready 门禁保持不变。
+  Discovery 同次评估新增独立 `quality_score` 和 `content-eval-v7`，主动候选严格要求
+  `min(quality,relevance,summary)>=0.75`、可靠正文摘要、已评估 topic 和完整可投递时效，
+  旧行未知值不补高分、每轮最多复审 5 条。精确 evaluator 结果以覆盖画像、负反馈、
+  时间、embedding 与模型路由的摘要键持久复用（30 天/20,000 条），失败和正文证据不
+  落库。Core 内部最多排序 3 条不再解释为 Phase 1 接收 3 条；NEKO 只取排名第 1 条。
+
 - **隐私安全的 NEKO 主动候选三层契约**：新增非消费式
   `preview_proactive_candidates()`，把稳定追踪身份、有界候选语义与敏感策略分离；候选
   最多 3 条，字段固定限长，兴趣依据只来自聚合画像与收藏主题，不输出原始行为或自由

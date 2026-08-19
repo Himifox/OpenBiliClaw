@@ -420,6 +420,9 @@ class RuntimeContext:
     # projection to every disk/API config rebuild so persisted standalone
     # credentials cannot silently become active after a hot reload.
     host_config_transform: Any = None
+    # Embedded hosts may defer user-facing copy until an explicit surface
+    # request. This stable setting survives hot reloads.
+    surface_copy_mode: str = "background"
     pool_inventory_commit_callback: Any = field(init=False, repr=False, compare=False)
     _pool_inventory_commit_subscribers: list[Any] = field(
         default_factory=list,
@@ -1520,8 +1523,7 @@ class RuntimeContext:
         async def _request_candidate_supply(reason: str) -> dict[str, object]:
             return await new_runtime_controller.supply_candidates_once(reason=reason)
 
-        async def _precompute_committed_candidates() -> None:
-            expression_coordinator.notify("candidate_commit")
+        expression_coordinator: Any = None
 
         from openbiliclaw.runtime.expression_copy import ExpressionCopyCoordinator
 
@@ -1538,17 +1540,26 @@ class RuntimeContext:
             )
             return int(completed)
 
-        expression_coordinator = ExpressionCopyCoordinator(
-            pending_count_provider=new_recommendation_engine.count_pending_expression_copy_demand,
-            drain_callback=_drain_expression_copy,
-            safety_wake_seconds=float(
-                getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
-            ),
-        )
+        if self.surface_copy_mode == "background":
+            expression_coordinator = ExpressionCopyCoordinator(
+                pending_count_provider=(
+                    new_recommendation_engine.count_pending_expression_copy_demand
+                ),
+                drain_callback=_drain_expression_copy,
+                safety_wake_seconds=float(
+                    getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
+                ),
+            )
+            set_copy_callback = getattr(
+                new_recommendation_engine, "set_copy_pending_callback", None
+            )
+            if callable(set_copy_callback):
+                set_copy_callback(expression_coordinator.notify)
         new_runtime_controller.expression_copy_coordinator = expression_coordinator
-        set_copy_callback = getattr(new_recommendation_engine, "set_copy_pending_callback", None)
-        if callable(set_copy_callback):
-            set_copy_callback(expression_coordinator.notify)
+
+        async def _precompute_committed_candidates() -> None:
+            if expression_coordinator is not None:
+                expression_coordinator.notify("candidate_commit")
 
         candidate_eval_workers = effective_candidate_eval_workers(
             int(getattr(discovery_cfg, "candidate_eval_concurrency", 3)),
@@ -1562,7 +1573,11 @@ class RuntimeContext:
             batch_size=30,
             supply_callback=_request_candidate_supply,
             post_commit_callback=_precompute_committed_candidates,
-            on_admitted=lambda count: expression_coordinator.notify(f"candidate_admitted:{count}"),
+            on_admitted=(
+                lambda count: expression_coordinator.notify(f"candidate_admitted:{count}")
+                if expression_coordinator is not None
+                else None
+            ),
             work_allowed=lambda: (
                 new_runtime_controller._is_initialized()  # noqa: SLF001
                 and new_runtime_controller._llm_work_allowed()  # noqa: SLF001
@@ -1915,7 +1930,7 @@ class RuntimeContext:
                 coordinator = getattr(self.runtime_controller, "expression_copy_coordinator", None)
                 if coordinator is not None:
                     coordinator.notify("hot_reload")
-                else:
+                elif self.surface_copy_mode == "background":
                     precompute = getattr(self.recommendation_engine, "precompute_pool_copy", None)
                     if callable(precompute):
                         self.task_registry.track(
@@ -2069,6 +2084,7 @@ def build_runtime_context(
     event_hub: Any | None = None,
     llm_provider_overrides: dict[str, Any] | None = None,
     host_config_transform: Any = None,
+    surface_copy_mode: str = "background",
 ) -> RuntimeContext:
     """Construct a fully-wired ``RuntimeContext`` from a ``Config``.
 
@@ -2127,6 +2143,7 @@ def build_runtime_context(
         event_hub=event_hub,
         llm_provider_overrides=dict(llm_provider_overrides or {}),
         host_config_transform=host_config_transform,
+        surface_copy_mode=surface_copy_mode,
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -2145,6 +2162,7 @@ def build_degraded_runtime_context(
     event_hub: Any | None = None,
     llm_provider_overrides: dict[str, Any] | None = None,
     host_config_transform: Any = None,
+    surface_copy_mode: str = "background",
     exc: Exception | None = None,
 ) -> RuntimeContext:
     """Construct a minimal context that can serve config recovery endpoints.
@@ -2212,6 +2230,7 @@ def build_degraded_runtime_context(
         event_hub=event_hub,
         llm_provider_overrides=dict(llm_provider_overrides or {}),
         host_config_transform=host_config_transform,
+        surface_copy_mode=surface_copy_mode,
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,

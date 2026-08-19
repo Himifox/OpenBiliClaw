@@ -1,5 +1,11 @@
 # 灵魂引擎
 
+> Token 平衡边界：现有 awareness watermark、insight cursor、无新 note 零调用和最多
+> 40 条既有假设上下文继续作为唯一增量检查点。`compact-v1` 的真实质量门曾失败，因此
+> 生产仍使用 `legacy`；新的 `delta-v2` 只有在同日冻结输入 A/A 与 A/B 达到输入 token
+> 至少下降 30%、解析 100%、evidence 漂移不超 A/A 包络且无关键遗漏后才允许提交和启用。
+> 在该门通过前，本分支不删减新 awareness evidence，也不把原始行为下放给 NEKO Phase 1。
+
 > `SoulEngine` 接受 runtime-owned gate，内部服务与主服务共享同一对象；`SocraticDialogue` 优先复用 Soul 服务。Prompt、token 与成本语义未变。
 
 > 用户深度理解核心 — 从行为数据到人格画像的推理引擎。

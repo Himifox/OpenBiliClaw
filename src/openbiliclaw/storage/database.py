@@ -1052,6 +1052,8 @@ CREATE TABLE IF NOT EXISTS content_cache (
     source_rank INTEGER DEFAULT 0,
     relevance_score REAL DEFAULT 0.0,
     relevance_reason TEXT DEFAULT '',
+    quality_score REAL,
+    evaluation_contract_version TEXT,
     temporal_class TEXT DEFAULT 'unknown',
     temporal_confidence REAL DEFAULT 0.0,
     temporal_reason TEXT DEFAULT '',
@@ -1084,6 +1086,17 @@ CREATE TABLE IF NOT EXISTS content_cache (
     -- NULL for legacy / non-search / flag-off content.
     source_keyword_id INTEGER
 );
+
+-- Privacy-safe exact evaluator cache. Keys are digests; values contain only
+-- validated structured evaluator output, never prompt/content/profile text.
+CREATE TABLE IF NOT EXISTS evaluation_result_cache (
+    key_digest TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accessed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_evaluation_result_cache_accessed
+ON evaluation_result_cache(accessed_at);
 
 -- Unified raw discovery candidate queue.
 -- Producers enqueue platform-specific raw content here; evaluators claim
@@ -2190,6 +2203,7 @@ class Database:
         xhs_self_nickname: str = "",
         curator_history_limit: int = 30,
         source_platform: str = "",
+        semantic_ready: bool = False,
     ) -> PoolServeSnapshot:
         """Load a recommendation snapshot on the interactive SQLite worker."""
         loop = asyncio.get_running_loop()
@@ -2202,6 +2216,7 @@ class Database:
                 xhs_self_nickname=xhs_self_nickname,
                 curator_history_limit=curator_history_limit,
                 source_platform=source_platform,
+                semantic_ready=semantic_ready,
             ),
         )
 
@@ -2259,6 +2274,7 @@ class Database:
         xhs_self_nickname: str = "",
         curator_history_limit: int = 30,
         source_platform: str = "",
+        semantic_ready: bool = False,
     ) -> PoolServeSnapshot:
         """Load all hot-path pool state through one isolated read snapshot.
 
@@ -2289,11 +2305,44 @@ class Database:
             # Materialize the canonical all-time seen ledger once and reuse it
             # across every availability/candidate helper in this transaction.
             viewed_content_keys, seen_bvids = isolated._seen_state_on(isolated.conn)
-            readiness = isolated.count_pool_readiness(
-                xhs_self_nickname=xhs_self_nickname,
-                _viewed_content_keys=viewed_content_keys,
-            )
-            if scope:
+            if semantic_ready:
+                semantic_rows = isolated._load_available_pool_candidate_rows_on(
+                    isolated.conn,
+                    xhs_self_nickname=xhs_self_nickname,
+                    _viewed_content_keys=viewed_content_keys,
+                    full_rows=True,
+                    require_copy=False,
+                )
+                readiness = {
+                    "available": len(semantic_rows),
+                    "copy_ready": 0,
+                    "raw": len(semantic_rows),
+                    "pending": 0,
+                    "admitted_pending_copy": 0,
+                    "admitted_pending_available": 0,
+                }
+            else:
+                semantic_rows = []
+                readiness = isolated.count_pool_readiness(
+                    xhs_self_nickname=xhs_self_nickname,
+                    _viewed_content_keys=viewed_content_keys,
+                )
+            if semantic_ready and scope:
+                rows = Database._balance_pool_rows(
+                    [
+                        row
+                        for row in semantic_rows
+                        if _pool_source_family(row["source"], row["source_platform"])
+                        == scope
+                    ],
+                    limit=max(0, int(limit)),
+                )
+            elif semantic_ready:
+                rows = Database._balance_pool_rows(
+                    semantic_rows,
+                    limit=max(0, int(limit)),
+                )
+            elif scope:
                 # Take the platform's whole available set, then apply the same
                 # topic round-robin ``get_pool_candidates`` uses. Truncating by
                 # relevance instead would fill the window with a few dominant
@@ -2319,7 +2368,7 @@ class Database:
             loaded_count = len(rows)
 
             topups: list[tuple[str, int]] = []
-            if not scope:
+            if not scope and not semantic_ready:
                 present = {
                     str(row.get("source_platform", "") or "").strip().lower() or "bilibili"
                     for row in rows
@@ -5242,6 +5291,8 @@ class Database:
                 kwargs.get("bookmark_count", 0),
                 kwargs.get("relevance_score", 0.0),
                 kwargs.get("relevance_reason", ""),
+                kwargs.get("quality_score"),
+                kwargs.get("evaluation_contract_version"),
                 temporal_to_persist[0],
                 temporal_to_persist[1],
                 temporal_to_persist[2],
@@ -5323,6 +5374,8 @@ class Database:
                 bookmark_count,
                 relevance_score,
                 relevance_reason,
+                quality_score,
+                evaluation_contract_version,
                 temporal_class,
                 temporal_confidence,
                 temporal_reason,
@@ -5355,7 +5408,7 @@ class Database:
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
@@ -5418,6 +5471,14 @@ class Database:
                     NULLIF(excluded.relevance_reason, ''),
                     content_cache.relevance_reason,
                     ''
+                ),
+                quality_score = COALESCE(
+                    excluded.quality_score,
+                    content_cache.quality_score
+                ),
+                evaluation_contract_version = COALESCE(
+                    NULLIF(excluded.evaluation_contract_version, ''),
+                    content_cache.evaluation_contract_version
                 ),
                 temporal_class = CASE
                     WHEN ? THEN excluded.temporal_class
@@ -7307,6 +7368,108 @@ class Database:
         rows = self._load_content_cache_rows_by_bvid_on(self.conn, head_bvids)
         return self._balance_pool_rows(rows, limit=limit)
 
+    def get_semantic_pool_candidates(
+        self,
+        limit: int = 20,
+        *,
+        source_platform: str = "",
+        xhs_self_nickname: str = "",
+    ) -> list[dict[str, Any]]:
+        """Return ranked candidates whose evaluated semantics are ready.
+
+        Unlike the public pool reader, this host-only path intentionally does
+        not require pre-generated expression copy. Every other canonical pool
+        guard remains in force, including admission, classification, temporal,
+        seen, linkability, delight-claim, feedback, and presentation history.
+        """
+        self._ensure_fresh_read()
+        rows = self._load_available_pool_candidate_rows_on(
+            self.conn,
+            max_per_topic_group=3,
+            xhs_self_nickname=xhs_self_nickname,
+            full_rows=True,
+            require_copy=False,
+        )
+        scope = normalize_source_platform(source_platform)
+        if scope:
+            rows = [
+                row
+                for row in rows
+                if _pool_source_family(row["source"], row["source_platform"]) == scope
+            ]
+        return self._balance_pool_rows(rows, limit=max(0, int(limit)))
+
+    def get_evaluation_result_cache(self, key_digest: str) -> list[object] | None:
+        """Read one unexpired digest-keyed evaluator result and touch its LRU clock."""
+        import json
+
+        digest = str(key_digest or "").strip()
+        if not digest:
+            return None
+        row = self.conn.execute(
+            """
+            SELECT result_json
+            FROM evaluation_result_cache
+            WHERE key_digest = ?
+              AND created_at >= datetime('now', '-30 days')
+            """,
+            (digest,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(str(row["result_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, list):
+            return None
+        self._execute_write(
+            "UPDATE evaluation_result_cache SET accessed_at = CURRENT_TIMESTAMP "
+            "WHERE key_digest = ?",
+            (digest,),
+        )
+        return list(payload)
+
+    def put_evaluation_result_cache(
+        self,
+        key_digest: str,
+        result: Sequence[object],
+    ) -> None:
+        """Persist one validated evaluator result under a non-reversible key."""
+        import json
+
+        digest = str(key_digest or "").strip()
+        if not digest:
+            return
+        encoded = json.dumps(list(result), ensure_ascii=False, separators=(",", ":"))
+        self._execute_write(
+            """
+            INSERT INTO evaluation_result_cache (
+                key_digest, result_json, created_at, accessed_at
+            ) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(key_digest) DO UPDATE SET
+                result_json = excluded.result_json,
+                created_at = CURRENT_TIMESTAMP,
+                accessed_at = CURRENT_TIMESTAMP
+            """,
+            (digest, encoded),
+        )
+        self._execute_write(
+            "DELETE FROM evaluation_result_cache "
+            "WHERE created_at < datetime('now', '-30 days')"
+        )
+        self._execute_write(
+            """
+            DELETE FROM evaluation_result_cache
+            WHERE key_digest IN (
+                SELECT key_digest
+                FROM evaluation_result_cache
+                ORDER BY accessed_at DESC, key_digest DESC
+                LIMIT -1 OFFSET 20000
+            )
+            """
+        )
+
     @staticmethod
     def _load_content_cache_rows_by_bvid_on(
         conn: sqlite3.Connection,
@@ -7543,6 +7706,7 @@ class Database:
         xhs_self_nickname: str = "",
         _viewed_content_keys: set[str] | None = None,
         full_rows: bool = False,
+        require_copy: bool = True,
     ) -> list[dict[str, Any]]:
         """Load rows counted by the frontend-visible pool availability gate.
 
@@ -7575,6 +7739,10 @@ class Database:
                 "temporal_evidence_complete"
             )
         )
+        copy_gate = """
+              AND COALESCE(pool_expression, '') != ''
+              AND COALESCE(pool_topic_label, '') != ''
+        """ if require_copy else ""
         cursor = conn.execute(
             f"""
             SELECT {projection}
@@ -7582,8 +7750,7 @@ class Database:
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
               AND {admission_sql}
-              AND COALESCE(pool_expression, '') != ''
-              AND COALESCE(pool_topic_label, '') != ''
+              {copy_gate}
               AND COALESCE(style_key, '') != ''
               AND COALESCE(topic_group, '') != ''
               AND (
@@ -10535,6 +10702,14 @@ class Database:
                                         AND COALESCE(topic_group, '') = ''
                                         AND COALESCE(relevance_score, 0) = 0
                                     )
+                                    OR (
+                                        COALESCE(pool_status, 'fresh') = 'fresh'
+                                        AND (
+                                            quality_score IS NULL
+                                            OR COALESCE(evaluation_contract_version, '')
+                                                != 'content-eval-v7'
+                                        )
+                                    )
                               )
                               {guard_sql}
                               AND NOT EXISTS (
@@ -10554,11 +10729,31 @@ class Database:
                             (now_text, *guard_params),
                         ).fetchall()
                     ]
-                    selected = self._exclude_viewed_rows(
+                    unviewed = self._exclude_viewed_rows(
                         rows,
                         self._recent_viewed_content_keys_on(connection),
-                        limit=max_rows,
-                    )[:max_rows]
+                        limit=max(len(rows), max_rows),
+                    )
+                    selected: list[dict[str, Any]] = []
+                    quality_review_count = 0
+                    for row in unviewed:
+                        quality_only = bool(
+                            str(row.get("style_key") or "").strip()
+                            and str(row.get("topic_group") or "").strip()
+                            and float(row.get("relevance_score") or 0.0) > 0
+                            and (
+                                row.get("quality_score") is None
+                                or str(row.get("evaluation_contract_version") or "")
+                                != "content-eval-v7"
+                            )
+                        )
+                        if quality_only:
+                            if quality_review_count >= 5:
+                                continue
+                            quality_review_count += 1
+                        selected.append(row)
+                        if len(selected) >= max_rows:
+                            break
                     leases: list[tuple[str, str]] = []
                     for row in selected:
                         if str(row.get("pool_status") or "fresh") != "temporal_review_hold":
@@ -12434,6 +12629,8 @@ class Database:
         required_columns = {
             "relevance_score": "REAL DEFAULT 0.0",
             "relevance_reason": "TEXT DEFAULT ''",
+            "quality_score": "REAL",
+            "evaluation_contract_version": "TEXT",
             "candidate_tier": "TEXT DEFAULT 'primary'",
         }
         for column_name, column_type in required_columns.items():

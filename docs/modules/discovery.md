@@ -20,6 +20,16 @@ API daemon 的候选 admission 成功后只同步调用轻量 expression `notify
 
 当前模块包含：
 
+- **高置信主动交接评估** — 同一次 evaluator 调用同时输出独立
+  `quality_score` 与既有 `relevance_score`，契约版本为 `content-eval-v7`；旧行保持
+  `NULL`，每轮最多复审 5 条。主动交接使用
+  `min(quality, relevance, summary) >= 0.75`，任一分量、主题、可靠摘要、完整时效证据
+  或当前契约缺失时失败关闭，不把判断交给 NEKO Phase 1。
+- **精确评估复用** — 持久 cache key 覆盖内容指纹、画像/负反馈摘要、时效桶、来源、
+  embedding 与实际模型路由 namespace；SQLite 仅存 key 摘要和验证后的结构化结果，
+  30 天 / 20,000 条 LRU。失败、修复重试、多模态不完整结果和含逐字正文时效证据的
+  结果不持久化。prefilter 继续默认 shadow，未过既有审计门不得切 enforce。
+
 - **ContentDiscoveryEngine** — 发现策略编排器，负责注册、运行、去重、批量评估和缓存收口；也提供只拉原始候选的 `produce_candidates()`
 - **批量评估输出预算** — 文本与多模态 evaluator 每个 provider 请求最多声明 4096 个输出 tokens；该值覆盖 30 条结构化评分的生产观测范围，同时避免兼容服务按过大的声明上限预占额度并误触发 `insufficient_quota`
 - **证据驱动时效三态** — 单条与批量 evaluator 都把候选已有的 `published_at` 和精确 UTC `evaluated_at` 交给 LLM，但 `relevance_score` 只表达内容与画像的相关性，不再因新旧加减分；同一次调用原子输出 `temporal_class / confidence / reason`，以及 `validity_mode / valid_until / scope / evidence / state`。`evidence` 必须逐字来自 prompt 可见正文；本地 grounding 与策略层只在高置信、完整、`core` 的明确 deadline 或 terminal state 上 hard expire，其余年龄到点仅进入可逆复审。代码生成 `evaluated_at / next_review_at / policy_version / evidence_complete`，无效、缺失、标题钩子和低置信结果 fail-neutral

@@ -11,6 +11,11 @@
 `llm/` 包提供了一套抽象的 LLM 调用接口，上层模块（Soul Engine、Discovery Engine 等）通过 `LLMService` 或 `LLMRegistry` 发起调用，不需要关心底层用的是哪个模型。
 
 核心设计：
+- **分阶段计量而不重复计费** — OBC `llm_usage.caller` 继续细分
+  `soul.insight`、`discovery.evaluate_batch`、`recommendation.write_expression`；宿主总账
+  与 OBC 诊断拆分不得相加。lazy 宿主不运行后台 expression worker。
+- **模型路由参与精确缓存** — `LLMService.cache_route_namespace()`只提供无凭据路由身份，
+  最终仅以 SHA-256 key 摘要落库；宿主管理模型切换后下一次评估自动失效旧缓存。
 - **Provider 抽象** — `LLMProvider` ABC 定义统一接口
 - **Registry 管理** — 以实例 ID 注册端点；同一种 adapter 可出现多次，并按配置的任意长度实例链依次调用
 - **Service 门面** — `LLMService` 封装 prompt 组装 + 调用 + 校验

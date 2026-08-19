@@ -41,6 +41,11 @@ after a settings save. Together they let an embedding host resolve its current
 model route and credentials at call time without writing those credentials into
 OpenBiliClaw configuration. Injected
 objects remain owned by the host; a database created by Core is closed by Core.
+`surface_copy_mode` defaults to `"background"` for standalone/API compatibility.
+An embedded host may select `"lazy"`: expression-copy coordination is not
+created or restarted, while `preview_proactive_candidates()` reads the separate
+semantic-ready pool. An explicit `recommend()` call still generates and caches
+copy before recording delivery. Hot reload preserves this host-owned mode.
 If the LLM registry cannot be built, the default `allow_degraded=True` creates a
 recovery-capable Core. Set it to `False` when an embedding host prefers startup
 to fail immediately. `reload()` never moves a live database: changing
@@ -65,7 +70,7 @@ profile, recommendation, and dialogue services stay inside Core.
    NEKO-managed provider under the configured OpenBiliClaw instance ID.
 2. Enter its async lifecycle from NEKO's process supervisor.
 3. Read `preview_proactive_candidates()` before NEKO Phase 1. Preview only reads
-   copy-ready canonical pool rows: it does not refresh sources, call an LLM,
+   semantic-ready canonical pool rows: it does not refresh sources, call an LLM,
    write presentation history, or consume a candidate. The optional last three
    user messages are used in memory only for deterministic sensitive-topic
    matching and are not persisted or sent to a model.

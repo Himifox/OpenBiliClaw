@@ -726,6 +726,26 @@ class RecommendationEngine:
             )
         return result.items
 
+    async def preview_semantic(
+        self,
+        profile: SoulProfile,
+        *,
+        limit: int = 3,
+        excluded_bvids: frozenset[str] = frozenset(),
+        source_platform: str = "",
+    ) -> list[Recommendation]:
+        """Rank evaluated candidates without requiring or generating copy."""
+        async with self._serve_lock:
+            result = await self._serve_with_result_unlocked(
+                profile,
+                limit=limit,
+                excluded_bvids=excluded_bvids,
+                expression_mode="semantic",
+                source_platform=source_platform,
+                consume=False,
+            )
+        return result.items
+
     async def record_delivery(
         self,
         recommendation: Recommendation,
@@ -832,7 +852,7 @@ class RecommendationEngine:
         *,
         limit: int,
         excluded_bvids: frozenset[str],
-        expression_mode: Literal["realtime", "precomputed"],
+        expression_mode: Literal["realtime", "precomputed", "semantic"],
         source_platform: str = "",
         consume: bool = True,
     ) -> ServeResult:
@@ -853,7 +873,7 @@ class RecommendationEngine:
         Returns:
             Recommendations plus inventory and phase timings.
         """
-        label = "realtime" if expression_mode == "realtime" else "pool"
+        label = expression_mode if expression_mode != "precomputed" else "pool"
         scope = normalize_source_platform(source_platform)
         multiplier = 4 if excluded_bvids else 3
         candidate_limit = max(limit * multiplier, 40) + len(excluded_bvids)
@@ -872,6 +892,8 @@ class RecommendationEngine:
             }
             if scope:
                 snapshot_kwargs["source_platform"] = scope
+            if expression_mode == "semantic":
+                snapshot_kwargs["semantic_ready"] = True
             snapshot = await snapshot_loader(**snapshot_kwargs)
             pool_readiness = dict(snapshot.readiness)
             candidates = self._enforce_platform_scope(
@@ -898,8 +920,34 @@ class RecommendationEngine:
             )
         else:
             # Compatibility path for test doubles and third-party adapters.
-            pool_readiness = await asyncio.to_thread(self._pool_readiness_counts)
-            if int(pool_readiness.get("available", 0)) > 0:
+            if expression_mode == "semantic":
+                semantic_loader = getattr(self._database, "get_semantic_pool_candidates", None)
+                semantic_rows = (
+                    await asyncio.to_thread(
+                        semantic_loader,
+                        candidate_limit,
+                        source_platform=scope,
+                        xhs_self_nickname=self._xhs_self_nickname(),
+                    )
+                    if callable(semantic_loader)
+                    else []
+                )
+                candidates = self._rows_to_discovered(list(semantic_rows))
+                loaded_count = len(candidates)
+                pool_readiness = {
+                    "available": loaded_count,
+                    "raw": loaded_count,
+                    "pending": 0,
+                }
+                if excluded_bvids:
+                    candidates = [item for item in candidates if item.bvid not in excluded_bvids]
+                after_exclude_count = len(candidates)
+                candidates = self._exclude_disliked_topic_candidates_for_serve(candidates, profile)
+                after_disliked_count = len(candidates)
+                after_viewed_count = len(candidates)
+            else:
+                pool_readiness = await asyncio.to_thread(self._pool_readiness_counts)
+            if expression_mode != "semantic" and int(pool_readiness.get("available", 0)) > 0:
                 # Same rule as the snapshot loader: subclasses and test doubles
                 # override this with the historical signature, so a
                 # cross-platform serve must not hand them a new keyword.
@@ -918,7 +966,7 @@ class RecommendationEngine:
                 ) = await asyncio.to_thread(
                     partial(self._load_filtered_serve_candidates, profile, **loader_kwargs)
                 )
-            else:
+            elif expression_mode != "semantic":
                 candidates = []
                 loaded_count = 0
                 after_exclude_count = 0
@@ -1123,6 +1171,8 @@ class RecommendationEngine:
                     rec.expression = self._fallback_expression(item)
                 if not rec.topic_label:
                     rec.topic_label = self._fallback_topic_label(profile)
+            elif expression_mode == "semantic":
+                rec.topic_label = item.topic_group.strip()
             recommendations.append(rec)
 
         # Realtime copy is provider I/O and may take seconds. Generate it
@@ -5369,6 +5419,14 @@ class RecommendationEngine:
                 source_strategy=str(row.get("source", "")),
                 relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
                 relevance_reason=str(row.get("relevance_reason", "")),
+                quality_score=(
+                    float(row["quality_score"])
+                    if row.get("quality_score") is not None
+                    else None
+                ),
+                evaluation_contract_version=str(
+                    row.get("evaluation_contract_version", "") or ""
+                ),
                 pool_expression=str(row.get("pool_expression", "")),
                 pool_topic_label=str(row.get("pool_topic_label", "")),
                 candidate_tier=str(row.get("candidate_tier", "primary") or "primary"),

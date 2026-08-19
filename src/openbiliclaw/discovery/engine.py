@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import inspect
 import logging
 import math
@@ -120,12 +121,14 @@ _EvalCacheEntryV5 = tuple[
     str,
     bool,
 ]
+_EvalCacheEntryV7 = tuple[*_EvalCacheEntryV5, float, str]
 _EvalCacheEntry = (
     tuple[float, str, str, str]
     | tuple[float, str, str, str, str]
     | _EvalCacheEntryV4
     | _EvalCacheEntryV5Legacy
     | _EvalCacheEntryV5
+    | _EvalCacheEntryV7
 )
 _BILIBILI_CONTENT_ID_PATTERN = re.compile(r"^BV[0-9A-Za-z]+$")
 _CANONICAL_STORAGE_KEY_PLATFORMS = frozenset(
@@ -167,7 +170,8 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
-_EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
+EVALUATION_CONTRACT_VERSION = "content-eval-v7"
+_EVAL_BATCH_CACHE_VERSION = EVALUATION_CONTRACT_VERSION
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
 _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT = "sparse-json"
@@ -464,12 +468,18 @@ def _apply_temporal_evaluation(
 
 def _decode_eval_cache_entry(
     cached: _EvalCacheEntry,
-) -> tuple[float, str, str, str, str, TemporalEvaluation]:
+) -> tuple[float, str, str, str, str, TemporalEvaluation, float | None, str]:
     """Decode v5 evaluator cache tuples and legacy 4/5/9-field entries."""
 
     score, reason, topic_group, style_key = cached[:4]
     franchise_key = cached[4] if len(cached) >= 5 else ""
     temporal = TemporalEvaluation()
+    quality_score: float | None = None
+    evaluation_contract_version = ""
+    if len(cached) >= 19:
+        cached_v7 = cast("_EvalCacheEntryV7", cached)
+        quality_score = cached_v7[17]
+        evaluation_contract_version = cached_v7[18]
     if len(cached) >= 17:
         cached_v5 = cast("_EvalCacheEntryV5", cached)
         temporal = TemporalEvaluation(
@@ -509,12 +519,21 @@ def _decode_eval_cache_entry(
             temporal_reason=cached_v4[7],
             temporal_policy_version=cached_v4[8],
         )
-    return score, reason, topic_group, style_key, franchise_key, temporal
+    return (
+        score,
+        reason,
+        topic_group,
+        style_key,
+        franchise_key,
+        temporal,
+        quality_score,
+        evaluation_contract_version,
+    )
 
 
 def _eval_cache_entry_for_content(
     content: DiscoveredContent,
-) -> _EvalCacheEntryV5:
+) -> _EvalCacheEntryV7:
     """Build the v5 in-memory cache shape from an evaluated candidate."""
 
     return (
@@ -535,6 +554,8 @@ def _eval_cache_entry_for_content(
         content.temporal_next_review_at,
         content.temporal_evaluated_at,
         content.temporal_evidence_complete,
+        float(content.quality_score or 0.0),
+        content.evaluation_contract_version,
     )
 
 
@@ -781,6 +802,8 @@ class DiscoveredContent:
     discovery_lane: str = ""
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
     relevance_reason: str = ""  # Why this is relevant to the user
+    quality_score: float | None = None
+    evaluation_contract_version: str = ""
     temporal_class: str = "unknown"  # Why this content's value may expire
     temporal_confidence: float = 0.0  # Evaluator confidence in temporal_class
     temporal_reason: str = ""  # Short diagnostic for the temporal classification
@@ -883,6 +906,8 @@ class DiscoveredContent:
             "source_rank": self.source_rank,
             "relevance_score": self.relevance_score,
             "relevance_reason": self.relevance_reason,
+            "quality_score": self.quality_score,
+            "evaluation_contract_version": self.evaluation_contract_version,
             "temporal_class": self.temporal_class,
             "temporal_confidence": self.temporal_confidence,
             "temporal_reason": self.temporal_reason,
@@ -1173,10 +1198,30 @@ class ContentDiscoveryEngine:
     def _get_eval_cache_entry(self, cache_key: str) -> _EvalCacheEntry | None:
         cache = self._eval_cache_store()
         cached = cache.get(cache_key)
-        if cached is None:
+        if cached is not None:
+            cache.move_to_end(cache_key)
+            return cached
+        database = getattr(self, "_database", None)
+        load = getattr(database, "get_evaluation_result_cache", None)
+        if not callable(load):
             return None
+        try:
+            persisted = load(hashlib.sha256(cache_key.encode("utf-8")).hexdigest())
+        except Exception:
+            logger.exception("Failed to read persistent evaluator cache")
+            return None
+        if not isinstance(persisted, list) or len(persisted) < 19:
+            return None
+        restored = cast("_EvalCacheEntry", tuple(persisted))
+        try:
+            *_, quality, version = _decode_eval_cache_entry(restored)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if quality is None or version != EVALUATION_CONTRACT_VERSION:
+            return None
+        cache[cache_key] = restored
         cache.move_to_end(cache_key)
-        return cached
+        return restored
 
     def _set_eval_cache_entry(self, cache_key: str, entry: _EvalCacheEntry) -> None:
         cache = self._eval_cache_store()
@@ -1184,6 +1229,33 @@ class ContentDiscoveryEngine:
         cache.move_to_end(cache_key)
         while len(cache) > _EVAL_CACHE_MAX_ENTRIES:
             cache.popitem(last=False)
+        # Temporal evidence is a verbatim source excerpt. Keep those results
+        # memory-only so the durable cache never stores title/body fragments.
+        if len(entry) < 19 or str(entry[12] or "").strip():
+            return
+        database = getattr(self, "_database", None)
+        persist = getattr(database, "put_evaluation_result_cache", None)
+        if not callable(persist):
+            return
+        try:
+            persist(
+                hashlib.sha256(cache_key.encode("utf-8")).hexdigest(),
+                entry,
+            )
+        except Exception:
+            logger.exception("Failed to persist evaluator cache")
+
+    def _evaluation_model_route_namespace(self) -> str:
+        service = getattr(self, "_llm_service", None)
+        namespace = getattr(service, "cache_route_namespace", None)
+        if callable(namespace):
+            try:
+                value = namespace("discovery.evaluate_batch")
+            except Exception:
+                value = ""
+        else:
+            value = f"{type(service).__module__}.{type(service).__qualname__}"
+        return stable_json_digest({"route": str(value or "unknown")})
 
     @staticmethod
     def _normalize_eval_prefilter_mode(mode: str) -> str:
@@ -2085,7 +2157,7 @@ class ContentDiscoveryEngine:
         )
         cached = self._get_eval_cache_entry(cache_key)
         if cached is not None:
-            score, reason, topic_group, style_key, franchise_key, temporal = (
+            score, reason, topic_group, style_key, franchise_key, temporal, quality, version = (
                 _decode_eval_cache_entry(cached)
             )
             normalized_reason = normalize_evaluation_reason(score, reason)
@@ -2095,6 +2167,8 @@ class ContentDiscoveryEngine:
                 content.topic_group = topic_group
                 content.style_key = normalize_style_key(style_key)
                 content.franchise_key = franchise_key
+                content.quality_score = quality
+                content.evaluation_contract_version = version
                 _apply_temporal_evaluation(
                     content,
                     temporal,
@@ -2186,7 +2260,8 @@ class ContentDiscoveryEngine:
             if not isinstance(payload, dict):
                 raise ValueError("Expected JSON object from content evaluation")
             validated_score = self._validated_model_score(payload.get("score"))
-            if validated_score is None:
+            quality_score = self._validated_model_score(payload.get("quality_score"))
+            if validated_score is None or quality_score is None:
                 raise ValueError("Expected finite content evaluation score in [0, 1]")
             score = validated_score
             checked_reason = validated_text_field(
@@ -2215,6 +2290,8 @@ class ContentDiscoveryEngine:
             return 0.0
 
         content.relevance_score = score
+        content.quality_score = quality_score
+        content.evaluation_contract_version = EVALUATION_CONTRACT_VERSION
         content.relevance_reason = reason
         content.topic_group = topic_group
         content.style_key = style_key
@@ -2375,7 +2452,7 @@ class ContentDiscoveryEngine:
                 # The cache tuple grew first to carry franchise_key and now
                 # temporal semantics. Keep both legacy 4/5-field shapes safe
                 # for in-flight processes during a rolling upgrade.
-                score, reason, topic_group, style_key, franchise_key, temporal = (
+                score, reason, topic_group, style_key, franchise_key, temporal, quality, version = (
                     _decode_eval_cache_entry(cached)
                 )
                 normalized_reason = normalize_evaluation_reason(score, reason)
@@ -2388,6 +2465,8 @@ class ContentDiscoveryEngine:
                 content.topic_group = topic_group
                 content.style_key = style_key
                 content.franchise_key = franchise_key
+                content.quality_score = quality
+                content.evaluation_contract_version = version
                 _apply_temporal_evaluation(
                     content,
                     temporal,
@@ -3141,7 +3220,7 @@ class ContentDiscoveryEngine:
             f"{self._content_identity(content)}:content:{prompt_digest}:"
             f"evaluation_bucket:{evaluation_bucket}:"
             f"profile:{profile_digest}:embed:{self._evaluation_embedding_namespace()}:"
-            f"prefilter:{prefilter_mode}"
+            f"model:{self._evaluation_model_route_namespace()}:prefilter:{prefilter_mode}"
         )
 
     def _batch_eval_cache_key(
@@ -3201,6 +3280,7 @@ class ContentDiscoveryEngine:
             f"evaluation_bucket:{evaluation_bucket}:"
             f"profile:{profile_digest}:neg:{negative_digest}:"
             f"embed:{self._evaluation_embedding_namespace()}:"
+            f"model:{self._evaluation_model_route_namespace()}:"
             f"prefilter:{prefilter_mode}{transport_suffix}"
         )
 
@@ -3448,7 +3528,8 @@ class ContentDiscoveryEngine:
                 continue
             item_result: dict[str, Any] = raw_item
             score = self._validated_model_score(item_result.get("score"))
-            if score is None:
+            quality_score = self._validated_model_score(item_result.get("quality_score"))
+            if score is None or quality_score is None:
                 results.append(None)
                 continue
             checked_reason = validated_text_field(
@@ -3475,6 +3556,8 @@ class ContentDiscoveryEngine:
             temporal = parse_temporal_evaluation(item_result)
 
             content.relevance_score = score
+            content.quality_score = quality_score
+            content.evaluation_contract_version = EVALUATION_CONTRACT_VERSION
             content.relevance_reason = reason
             content.topic_group = topic_group
             content.style_key = style_key
@@ -3633,7 +3716,7 @@ class ContentDiscoveryEngine:
                 negative_examples=negative_examples,
                 evaluated_at=evaluated_at,
                 evaluation_bucket=evaluation_bucket,
-                normal_cache_enabled=normal_cache_enabled,
+                normal_cache_enabled=normal_cache_enabled and depth == 0,
             )
             missing: list[int] = []
             for index, score in zip(indices, subset_results, strict=True):

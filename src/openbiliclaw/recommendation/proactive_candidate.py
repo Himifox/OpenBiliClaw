@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -153,6 +154,15 @@ class CandidateSemantics:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateConfidence:
+    """Host-only confidence components; never a prompt payload."""
+
+    quality: float
+    relevance: float
+    summary: float
+
+
+@dataclass(frozen=True, slots=True)
 class CandidatePolicy:
     """Deterministic proactive privacy decision."""
 
@@ -168,6 +178,7 @@ class ProactiveRecommendationCandidate:
     tracking: CandidateTracking
     semantics: CandidateSemantics
     policy: CandidatePolicy
+    confidence_components: CandidateConfidence
 
 
 def _bounded_text(value: object, limit: int, *, strip_markup: bool = False) -> str:
@@ -404,20 +415,47 @@ def build_proactive_candidates(
         item_key = str(content.item_key or "").strip()
         url = str(content.content_url or "").strip()
         title = _bounded_text(content.title, 60)
-        topic = _bounded_text(
-            recommendation.topic_label or content.topic_group or content.topic_key,
-            16,
-        )
+        topic = _bounded_text(content.topic_group, 16)
         if not item_key or not url or not title or not topic:
+            continue
+        from openbiliclaw.discovery.engine import EVALUATION_CONTRACT_VERSION
+        from openbiliclaw.discovery.temporal import TEMPORAL_POLICY_VERSION
+
+        if content.evaluation_contract_version != EVALUATION_CONTRACT_VERSION:
+            continue
+        if (
+            not content.temporal_evidence_complete
+            or content.temporal_policy_version != TEMPORAL_POLICY_VERSION
+            or not str(content.temporal_evaluated_at or "").strip()
+            or str(content.temporal_class or "unknown").strip().lower() == "unknown"
+        ):
+            continue
+        quality = content.quality_score
+        relevance = content.relevance_score
+        if (
+            quality is None
+            or not math.isfinite(float(quality))
+            or not math.isfinite(float(relevance))
+        ):
             continue
         expires = _parse_datetime(content.temporal_valid_until)
         if expires is not None and expires <= current:
             continue
-        summary = _bounded_text(
-            content.description or content.body_text or title,
-            80,
-            strip_markup=True,
+        summary = _bounded_text(content.description or content.body_text, 80, strip_markup=True)
+        if not summary:
+            continue
+        confidence_components = CandidateConfidence(
+            quality=min(1.0, max(0.0, float(quality))),
+            relevance=min(1.0, max(0.0, float(relevance))),
+            summary=1.0,
         )
+        confidence = min(
+            confidence_components.quality,
+            confidence_components.relevance,
+            confidence_components.summary,
+        )
+        if confidence < 0.75:
+            continue
         combined = " ".join((title, topic, summary))
         sensitivity = _sensitivity(combined)
         if _is_denied_sensitive_text(combined, sensitivity):
@@ -478,7 +516,7 @@ def build_proactive_candidates(
                     source_platform=normalize_source_platform(content.source_platform),
                     author_name=_bounded_text(content.author_name or content.up_name, 60),
                     content_type=_bounded_text(content.content_type or "video", 20),
-                    confidence=min(1.0, max(0.0, float(recommendation.confidence or 0.0))),
+                    confidence=confidence,
                     freshness=_freshness(content, current),
                 ),
                 policy=CandidatePolicy(
@@ -486,6 +524,7 @@ def build_proactive_candidates(
                     proactive_policy=policy,
                     why_now_source=why_now_source,
                 ),
+                confidence_components=confidence_components,
             )
         )
     return candidates
