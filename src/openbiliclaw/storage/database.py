@@ -17352,6 +17352,28 @@ class Database:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_saved_topic_signals(self) -> dict[str, str]:
+        """Return aggregate-only saved topics and their latest saved timestamps."""
+        self._ensure_fresh_read()
+        rows = self.conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(cc.topic_group, ''), NULLIF(cc.topic_key, '')) AS topic,
+                MAX(m.added_at) AS last_saved_at
+            FROM saved_memberships AS m
+            JOIN saved_items AS i ON i.item_key = m.item_key
+            JOIN content_cache AS cc ON cc.item_key = i.item_key
+            WHERE COALESCE(NULLIF(cc.topic_group, ''), NULLIF(cc.topic_key, '')) IS NOT NULL
+            GROUP BY COALESCE(NULLIF(cc.topic_group, ''), NULLIF(cc.topic_key, ''))
+            ORDER BY topic ASC
+            """
+        ).fetchall()
+        return {
+            str(row["topic"]): str(row["last_saved_at"] or "")
+            for row in rows
+            if str(row["topic"] or "").strip()
+        }
+
     def upsert_native_save_state(
         self,
         list_kind: str,

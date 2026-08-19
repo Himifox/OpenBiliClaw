@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
     from openbiliclaw.llm.base import LLMProvider
     from openbiliclaw.recommendation.engine import Recommendation
+    from openbiliclaw.recommendation.proactive_candidate import (
+        ProactiveRecommendationCandidate,
+    )
     from openbiliclaw.soul.profile import OnionProfile
 
 
@@ -206,6 +209,36 @@ class OpenBiliClawCore:
                 source_platform=source_platform,
                 excluded_bvids=excluded_content_ids,
             ),
+        )
+
+    async def preview_proactive_candidates(
+        self,
+        *,
+        limit: int = 3,
+        source_platform: str = "",
+        excluded_content_ids: frozenset[str] = frozenset(),
+        explicit_context_texts: tuple[str, ...] = (),
+    ) -> list[ProactiveRecommendationCandidate]:
+        """Return privacy-bounded candidates for an embedded proactive host."""
+        from openbiliclaw.recommendation.proactive_candidate import (
+            build_proactive_candidates,
+        )
+
+        profile = await self.get_profile()
+        recommendations = cast(
+            "list[Recommendation]",
+            await self._require_service("recommendation_engine").preview(
+                profile,
+                limit=max(0, min(3, int(limit))),
+                source_platform=source_platform,
+                excluded_bvids=excluded_content_ids,
+            ),
+        )
+        return build_proactive_candidates(
+            recommendations,
+            profile=profile,
+            database=self._require_service("database"),
+            explicit_context_texts=explicit_context_texts[-3:],
         )
 
     async def record_recommendation_delivery(
