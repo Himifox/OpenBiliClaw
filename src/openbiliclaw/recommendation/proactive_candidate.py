@@ -293,6 +293,23 @@ def _is_explicit_subscription(topic: str, subscription_topics: Iterable[str]) ->
     return any(_matches_topic(topic, subscribed) for subscribed in subscription_topics)
 
 
+def _candidate_policy(
+    sensitivity: Sensitivity,
+    *,
+    explicit_context: bool,
+    explicit_subscription: bool,
+) -> tuple[ProactivePolicy, WhyNowSource] | None:
+    """Return the only permitted provenance for one proactive topic."""
+
+    if sensitivity == "none":
+        return "allow", "aggregated_interest"
+    if explicit_context:
+        return "explicit_context_only", "current_conversation"
+    if explicit_subscription:
+        return "explicit_context_or_subscription", "explicit_subscription"
+    return None
+
+
 def _reason_codes(
     *,
     profile: ProactiveProfile,
@@ -411,17 +428,14 @@ def build_proactive_candidates(
             context_texts=explicit_context_texts,
         )
         explicit_subscription = _is_explicit_subscription(topic, subscription_topics)
-        if sensitivity == "none":
-            policy: ProactivePolicy = "allow"
-            why_now_source: WhyNowSource = "aggregated_interest"
-        elif explicit_context:
-            policy = "explicit_context_only"
-            why_now_source = "current_conversation"
-        elif explicit_subscription:
-            policy = "explicit_context_or_subscription"
-            why_now_source = "explicit_subscription"
-        else:
+        policy_result = _candidate_policy(
+            sensitivity,
+            explicit_context=explicit_context,
+            explicit_subscription=explicit_subscription,
+        )
+        if policy_result is None:
             continue
+        policy, why_now_source = policy_result
 
         codes = _reason_codes(
             profile=profile,
