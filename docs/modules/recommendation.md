@@ -16,6 +16,23 @@ runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extr
 - **Recommendation** — 单条推荐结果
 - **PersonalTopic** — 后续个性化主题分组的占位结构
 
+## NEKO 主动候选交接
+
+`build_proactive_candidates()` 把非消费式推荐预览投影为三组宿主数据：Tracking 只保存
+稳定 `candidate_id`、内容身份、链接、期限和私有投递引用；Semantics 只包含有界的
+`title/topic/summary/reason_codes/source/author/type/confidence/freshness`；Policy 记录敏感
+类型、主动策略和 `why_now` 证据来源。标题、主题、摘要分别限制为 60/16/80 字，预览
+最多 3 条；无明确期限时不伪造 `expires_at`，已过期内容不交接。
+
+兴趣依据只从画像的聚合兴趣、平台占比和收藏主题聚合查询生成，最多 3 个 reason code，
+不会输出收藏条目、行为次数、内容名称或推荐 `expression`。候选 ID 使用 `item_key` 的
+8-byte BLAKE2s 摘要，跨预览稳定。该路径零新增 LLM、零展示历史写入；只有宿主成功
+投递后才把私有引用交给既有 `record_recommendation_delivery()`。
+
+健康、金融、政治、宗教候选默认不能由浏览画像主动触发。最近三条用户消息明确谈到
+同主题，或用户创建的明确主题订阅覆盖它时，才允许中性更新；诊断/治疗、投资买卖、
+政治劝服和信仰推断始终拒绝。消息仅在调用内存中做确定性匹配，不保存也不送模型。
+
 ## 已实现功能
 
 | 任务 | 状态 | 说明 |

@@ -33,6 +33,11 @@ NEKO's existing Phase 1, Phase 2 generates the only user-visible line, and only
 a successful delivery is recorded as shown. NEKO's normal and proactive chat
 paths do not call `core.chat()`. This unifies configuration and speaker
 ownership; it does not remove necessary background model analysis.
+Core applies aggregate-interest and sensitive-topic gates before separating
+tracking, Phase 1 semantics, and Phase 2 expression. Phase 1 sees at most three
+bounded candidates; Phase 2 sees only the selected title, topic, summary, and
+selection motive. Full profiles, raw behavior, URLs, and delivery identities do
+not enter either model prompt.
 
 | Cross-platform | Local-first | Trainable |
 |---|---|---|

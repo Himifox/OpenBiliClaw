@@ -22,6 +22,13 @@
 > `personality_portrait`）统一登记在 [画像使用登记表](../profile-usage.md)。新增
 > 消费画像的 prompt 前先查这张表，并复用其中的 view，不要另造序列化分支。
 
+## 主动推荐的聚合兴趣边界
+
+嵌入宿主的主动候选只读取 `InterestTag` 的主题、状态、首次/最近聚合证据时间与证据
+门槛，以及画像中的平台占比。收藏信号通过 storage 的只读聚合查询降为“主题 + 最近
+时间”；具体浏览、收藏、稍后看条目、次数和内容名称不会进入候选交接对象。敏感主题
+不能仅凭画像推断后主动提起；当前对话的明确主题只在内存中参与门禁，不写回 Soul。
+
 ## 有效 dislike 的即时可见性（2026-08-07）
 
 `SoulEngine.get_effective_disliked_topics()` 合并用户 overrides 后的 Soul dislike 树与 flat

@@ -15,8 +15,9 @@ trusted LAN → HTTPS（可选）→ TLS Proxy → FastAPI adapter ────�
                                                             └→ refresh / account-sync / auto-update task ownership
 
 NEKO model owner → host-managed LLMProvider ─→ OpenBiliClaw profile/evaluation/copy
-OpenBiliClaw canonical pool ─→ preview(no LLM/no consume) ─→ NEKO Phase 1
-                           ─→ selected candidate ─→ NEKO Phase 2 (only visible voice)
+OpenBiliClaw canonical pool ─→ aggregate signals + sensitive gate ─→ 3-layer candidate
+                           ─→ NEKO Phase 1 (max 3; semantic projection only)
+                           ─→ selected one ─→ NEKO Phase 2 (4 fields; only visible voice)
                            ─→ successful delivery ─→ atomic shown acknowledgement
 
 interactive (dialogue / config probe) ──────────────┐
@@ -148,7 +149,7 @@ candidate evaluation → effective profile view + exact tail-recall pool + negat
 ```
 
 1. **用户交互层** — Chrome / Firefox 插件负责受支持站点的普通行为采集、登录态只读任务与侧边栏；Linux.do / V2EX / 微博使用隔离任务 tab，微博普通页面不做行为采集。插件与移动 Web（`/m`）、桌面 Web（`/web`）共用本地 API；可选密码门禁保护局域网 / 远程访问。
-2. **外部集成层** — `OpenBiliClawCore` 是 NEKO 等进程内宿主的公开异步边界；FastAPI/uvicorn、OpenClaw adapter、skill wrappers、本地 API 与 CLI 是 Core 外部的传输或宿主适配层。Core 持有 `RuntimeContext`、后台任务与运行时资源，提供 `get_profile/recommend/preview_recommendations/record_recommendation_delivery/chat/publish_event`，不要求监听端口。宿主可用既有 `LLMProvider` 协议覆盖实例 provider，覆盖在 `reload()` 后保留；NEKO 由此动态拥有模型路由和凭据。NEKO 的正常聊天与主动聊天不调用 `core.chat()`：OpenBiliClaw 只交接结构化候选，NEKO 现有 Phase 1 选题、Phase 2 生成唯一用户可见台词，成功投递后才确认展示
+2. **外部集成层** — `OpenBiliClawCore` 是 NEKO 等进程内宿主的公开异步边界；FastAPI/uvicorn、OpenClaw adapter、skill wrappers、本地 API 与 CLI 是 Core 外部的传输或宿主适配层。Core 持有 `RuntimeContext`、后台任务与运行时资源，提供 `get_profile/recommend/preview_recommendations/preview_proactive_candidates/record_recommendation_delivery/chat/publish_event`，不要求监听端口。主动候选在 Core 内先由聚合兴趣和敏感门禁构造 Tracking/Semantics/Policy 三层；NEKO 仅把语义投影交给 Phase 1，最终一条的四字段投影交给 Phase 2。宿主可用既有 `LLMProvider` 协议覆盖实例 provider，覆盖在 `reload()` 后保留；NEKO 由此动态拥有模型路由和凭据。NEKO 的正常聊天与主动聊天不调用 `core.chat()`，成功投递后才用 Tracking 私有引用确认展示
 3. **Agent 核心层** — 自研编排器 + Soul Engine + Discovery Engine + Recommendation Engine + Skill System；抖音手动 discovery 与 daemon 共用正式 producer、统一关键词生命周期和待评估候选链，debug-only `discover-douyin` 才直接调用源服务
 4. **LLM 实例路由层** — `config / Web UI -> [llm.instances.<id>] -> 全局或分模块有序实例链 -> LLMRegistry -> Provider adapter`。实例 ID 是路由、健康与 cooldown 身份，adapter 类型只是协议实现，因此同类型的多个 Base URL / token / model 可以同时存在。模块默认继承全局链；自定义链只在链内降级，耗尽后不越界。配置界面另有两条无写入恢复支路：`draft -> /api/config/probe-service -> temporary registry -> stable total gate` 做目标实例/链真实探测，`draft -> /api/config/discover-models -> exact instance GET /models` 只返回模型 ID 与本地 Effort 建议。两者在 active registry 启动失败的 degraded 状态仍精确放行，但不改变配置、不放开业务 API。
    配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext rebuild -> apply-status/config_reloaded`；失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。

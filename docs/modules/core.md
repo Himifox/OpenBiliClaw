@@ -24,8 +24,11 @@ The stable host-facing surface is:
 - `reload()` for an atomic swappable-service rebuild;
 - `get_profile()`, `recommend()`, `chat()`, and `publish_event()` for the first
   direct integration operations;
-- `preview_recommendations()` plus `record_recommendation_delivery()` for a
-  two-phase embedded recommendation handoff;
+- `preview_recommendations()` plus `record_recommendation_delivery()` for the
+  compatibility handoff;
+- `preview_proactive_candidates(limit<=3, explicit_context_texts=...)` for a
+  privacy-bounded, non-consuming proactive handoff with separate tracking,
+  semantic, and policy layers;
 - `context` as an explicit compatibility escape hatch for capabilities not yet
   promoted to the public Core API.
 
@@ -61,9 +64,11 @@ profile, recommendation, and dialogue services stay inside Core.
 1. Construct one Core per local OpenBiliClaw data directory and inject the
    NEKO-managed provider under the configured OpenBiliClaw instance ID.
 2. Enter its async lifecycle from NEKO's process supervisor.
-3. Read `preview_recommendations()` before NEKO Phase 1. Preview only reads
+3. Read `preview_proactive_candidates()` before NEKO Phase 1. Preview only reads
    copy-ready canonical pool rows: it does not refresh sources, call an LLM,
-   write presentation history, or consume a candidate.
+   write presentation history, or consume a candidate. The optional last three
+   user messages are used in memory only for deterministic sensitive-topic
+   matching and are not persisted or sent to a model.
 4. Let NEKO's existing Phase 1 choose a candidate and Phase 2 generate the only
    user-visible character line. Do not call `core.chat()` from NEKO's normal or
    proactive conversation path.
@@ -89,8 +94,9 @@ and starts Core again, the extension resumes delivery automatically.
 ## Compatibility guarantees
 
 - `create()`, `start()`, `stop()`, `reload()`, `get_profile()`, `recommend()`,
-  `preview_recommendations()`, `record_recommendation_delivery()`, `chat()`, and
-  `publish_event()` remain the stable public surface.
+  `preview_recommendations()`, `preview_proactive_candidates()`,
+  `record_recommendation_delivery()`, `chat()`, and `publish_event()` remain the
+  stable public surface.
 - Direct host calls do not loop back through HTTP; FastAPI wraps the same Core.
 - Core owns runtime background tasks, while repeated `start()` / `stop()` and
   shutdown paths are lifecycle-safe and do not duplicate task ownership.
