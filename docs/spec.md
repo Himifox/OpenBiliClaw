@@ -641,7 +641,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  可选视觉 / 弹幕预热：质心、关键帧、完整 document embedding；endpoint provenance + stable slot retry │
 │  Desktop bundle: official Ollama.app runtime (ollama + runner dylibs/assets) │
 │  LLMService caller bucket → inherit global chain / custom chain │
-│  cognition named views → task gate: awareness_confusions compact; others legacy │
+│  cognition views → awareness_confusions compact default; opt-in bounded identity-safe envelope; others legacy │
 │    └→ token diet: preference packing + weighted recent/judged/relevant/important insight≤40 → full merge │
 │  discovery evaluator: text + metrics + optional compressed cover image input │
 │    └→ embedding prefilter shadow → privacy-safe decision → raw score/admission join → read-only gate │

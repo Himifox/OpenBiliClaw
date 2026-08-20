@@ -700,6 +700,12 @@ unmanaged_max_age_days = 30
 preference_prompt_view = "legacy"
 awareness_prompt_view = "compact-v1"
 insight_prompt_view = "legacy"
+# Awareness-only bounded-v2 guard. The durable event ledger stays intact;
+# complete content/session/author envelopes are the smallest prompt unit.
+# Keep compact-v1 until the active provider/model passes a semantic replay.
+awareness_target_input_tokens = 24000
+awareness_hard_input_tokens = 32000
+awareness_max_calls_per_cycle = 2
 
 [soul.preference]
 # v0.3.x event-satisfaction signal.

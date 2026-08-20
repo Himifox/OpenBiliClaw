@@ -114,6 +114,8 @@
 
 > `MemoryManager.propagate_event()` / `propagate_events()` 的职责边界是“落事实”：校验事件类型、补默认信号强度并写入 SQLite。storage 会在同一事务内把 `view` 的 canonical identity upsert 到 `seen_items`，这是推荐去重索引，不是画像推断。单条和批量版本都通过 `asyncio.to_thread` 进入 storage；前者每事件一条独立短连接事务，后者把整批初始化事件交给一条独立连接的单事务接口，二者都避免 SQLite busy wait 阻塞 API loop。生产 HTTP/source 入口统一由 `EventIngressService` 写 durable receipt 并 wake；初始化后的画像增量由 app-owned `EventProcessingScheduler` 的 generic/content-feedback consumers 按各自 cursor 扫描，在 `ProfileUpdatePipeline.checkpointed_enqueue_batch()` 中把 buffer+cursor 原子发布到同一份 `pipeline_state.json`，再调用 `tick_if_buffered()`。独立周期画像维护才调用完整 `tick()`；memory 层仍不会隐式触发偏好、觉察、洞察或 Soul 刷新。
 
+`bounded-v2` 只改变 Awareness 的请求期投影，不删除、覆盖或重写事件层。事件仍完整保存在 SQLite；activity envelope 的 `event_ids/content_key/author_key` 只存在于 Core 私有 tracking/manifest，模型只看到同一 envelope 内已绑定的作者、行为与最多两个兴趣。成功后水位按该 envelope 覆盖的连续真实事件推进，失败或关联校验不通过时水位不动。
+
 ## 公开 API
 
 ### MemoryManager

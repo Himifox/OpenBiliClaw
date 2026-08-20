@@ -1054,15 +1054,18 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `preference_prompt_view` | string | `"legacy"` | Preference prompt 的独立输入视图，只允许 `legacy` / `compact-v1`。2026-08-06 SenseTime task gate 未放行 Preference compact，因此默认保留逐字节回滚路径 |
-| `awareness_prompt_view` | string | `"compact-v1"` | 仅控制 `AwarenessAnalyzer.analyze_with_confusions()` / `soul.awareness_confusions` 的输入视图，只允许 `legacy` / `compact-v1`。2026-08-06 SenseTime token + quality gate 只放行了该 caller，因此默认启用；普通 `analyze()` / `soul.awareness` 固定为 `legacy`，不继承这个值 |
+| `awareness_prompt_view` | string | `"compact-v1"` | 仅控制 `AwarenessAnalyzer.analyze_with_confusions()` / `soul.awareness_confusions`，允许 `legacy` / `compact-v1` / `bounded-v2`。`bounded-v2` 将连续同内容、同会话、同作者事件组成不可拆 envelope，并用私有 manifest 将模型引用还原为精确事件 ID；它不适用于 Preference、Insight 或普通 `soul.awareness`。默认仍为已通过旧质量门的 `compact-v1`，新模式需按实际 provider/model 回放后显式启用 |
 | `insight_prompt_view` | string | `"legacy"` | Insight prompt 的独立输入视图，只允许 `legacy` / `compact-v1`。Insight 尚无预声明 token 阈值且本轮未获放行，默认保留 `legacy` |
+| `awareness_target_input_tokens` | int | `24000` | bounded-v2 的保守输入目标；以 UTF-8 字节数作为 tokenizer-independent 上界，只按完整 envelope 截断。范围 4,000–32,000；阈值源自 2026-08-20 的 127,198-token 事故，换模型后必须重校准 |
+| `awareness_hard_input_tokens` | int | `32000` | bounded-v2 绝对输入上限；范围 4,000–64,000，且不得小于 target。超限时失败关闭，不发请求、不推进水位 |
+| `awareness_max_calls_per_cycle` | int | `2` | 一个 cognition cycle 最多执行的 bounded Awareness 调用数；范围 1–10。剩余事件留在 durable ledger，后续从原水位连续处理 |
 | `posture_gate_mode` | string | `"shadow"` | 深层写入一致性门控（认知画像流水线 Phase 3）。`shadow`=判定异步旁路、**零延迟不阻塞原写入**，判定只落台账（`shadow_accept`/`shadow_downgrade`/`shadow_reject`，LLM 异常记 `shadow_error`）；`enforce`=写入前同步判定，reject/downgrade 拦截深层写入（downgrade 转为待验证假设），异常/解析失败保守 downgrade；`off`=完全旁路、与未接门控前逐字节一致。门控作用面仅三处：对话 goal/value/state 深层候选、管线 VALUES/CORE 层、soul 整份重建（interest 快线与 ROLE 层永不过门控） |
 | `posture_gate_force_enforce` | bool | `false` | 逃生门。切到 `enforce` 需满足 save-time 三条件（最早有效 shadow 判定距今 ≥14 天 **且** 近 14 天有效判定 ≥10 条 **且** 近 7 天 ≥1 条），否则保存被 blocking 拒绝。置 `true` 无条件放行——**有风险**：门控尚未校准即启用可能误拦或误放深层写入 |
 | `topic_lifecycle_serialization` | string | `"off"` | topic 状态机的 archived 序列化排除开关（认知画像流水线 Phase 4，本版**唯一最小消费**）。`off`（默认）时 `build_profile_summary` 与未接状态机前**逐字节一致**（回放门）；`on` 时把 `archived` 状态的 topic 排出 LLM 可见画像（domain/tag 两级）。规范 owner 是 `soul.profile_views.set_topic_lifecycle_serialization`；进程启动时由 `create_app` / CLI 设置，旧 `discovery.strategies._utils` 路径仅保留兼容 re-export。仅 `off`/`on` 两值，其余落默认 `off` |
 
-三个 prompt view 从 TOML、`GET/PUT /api/config`、CLI runtime、API 热重载与 OpenClaw
+三个 prompt view 与 bounded Awareness 预算从 TOML、`GET/PUT /api/config`、CLI runtime、API 热重载与 OpenClaw
 bootstrap 一路独立透传到 `SoulEngine`；其中 Awareness 值只进入 with-confusions seam，普通
-Awareness seam 固定为 `legacy`。未发布的聚合字段
+Awareness seam 固定为 `legacy`，bounded-v2 也不会被其它两个 view 接受。未发布的聚合字段
 `soul.cognition_prompt_view` 已删除且不作为兼容别名读取，避免一次配置误把三个任务全部
 切到 compact；replay 仍显式渲染 A/B 双臂，不读取这些生产默认值。
 

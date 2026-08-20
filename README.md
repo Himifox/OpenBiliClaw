@@ -717,7 +717,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 │ V2EX 身份梯级：PAT verified > browser observed > user accepted；冲突时只暂停账号画像写入 │
 │ 时效生命周期：正文逐字证据 + code-owned 复审时钟 → 可展示 / temporal_review_hold / 过期 │
 │ evaluator prefilter 默认 shadow → 隐私安全决策/原始分数 join → 只读质量 gate（不自动 enforce）│
-│ cognition named views → task-scoped gate：仅 awareness_confusions compact；其余 legacy │
+│ cognition views：awareness_confusions 默认 compact；可选 bounded envelope 精确关联+输入硬门；其余 legacy │
 │ token diet：偏好逐段真实装箱；洞察 近期/裁决保底 + 相关/重要/多样性加权≤40 → 完整历史 merge │
 │ keyword planner → 24h 安全跨 digest pending 整理 → 缺口/生成/领取（0=硬过期）│
 │ admitted backlog → copy 水位 ∪ 可换 topic 空位缺口 → eligible-first 补文案（0=legacy drain-all）│

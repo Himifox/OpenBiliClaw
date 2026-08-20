@@ -721,7 +721,7 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 │ V2EX identity ladder: verified PAT > observed browser > accepted user; mismatch pauses only account projection │
 │ Temporal lifecycle: verbatim evidence + code-owned review clock → serve / temporal_review_hold / expired │
 │ Evaluator prefilter stays shadow → privacy-safe decision/raw-score join → read-only gate (no auto-enforce) │
-│ Named cognition views → task gate: compact only for awareness_confusions; others legacy │
+│ Cognition views: awareness_confusions defaults compact; bounded identity-safe envelopes are opt-in; others legacy │
 │ Token diet: per-offset preference packing; weighted recent/judged/relevant/important insight≤40 → full merge │
 │ Keyword planner → safe 24h cross-digest pending reconcile → deficit/generate/claim (0=hard expiry) │
 │ Admitted backlog → copy watermark ∪ visible topic-slot gap → eligible-first copy (0=legacy drain-all) │
