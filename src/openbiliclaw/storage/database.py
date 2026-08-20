@@ -4736,6 +4736,21 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def query_llm_usage_today_by_caller(self) -> list[dict[str, Any]]:
+        """Return caller input totals for the current local calendar day."""
+
+        cursor = self.conn.execute(
+            """
+            SELECT COALESCE(caller, '') AS caller,
+                   COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens
+            FROM llm_usage
+            WHERE date(timestamp, 'localtime') = date('now', 'localtime')
+            GROUP BY caller
+            """
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     def query_llm_usage_total(self, *, days: int = 7) -> dict[str, Any]:
         """Return a single-row total for the last ``days`` days."""
         cursor = self.conn.execute(

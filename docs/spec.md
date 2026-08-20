@@ -296,8 +296,12 @@ canonical pool → aggregate signals + sensitive gate → Tracking / Semantics /
                → successful delivery only → Tracking reference → record shown
 
 NEKO host mode fixes `surface_copy_mode=lazy`: background
-`recommendation.write_expression=0`. Proactive admission requires current evaluator contract,
-verified `topic_group`, non-title summary, complete eligible temporal evidence, and
+`recommendation.write_expression=0`. The same host policy keeps active capacity 30,
+soft target 10, refills only below 4, evaluates at most 10 candidates per batch, and
+enforces a persistent 100k/day OBC background input ceiling (50k Discovery, 20k
+Recommendation, 30k Soul). Capacity is not a startup fill target.
+Proactive admission requires the current evaluator contract, verified `topic_group`,
+non-title summary, complete eligible temporal evidence, and
 `min(quality_score,relevance_score,summary_quality_score)>=0.75`; the summary score comes
 from the same `content-eval-v8` call and measures whether description/body reliably summarizes
 the content. Unknown, non-finite, stale-version, or low components fail closed.

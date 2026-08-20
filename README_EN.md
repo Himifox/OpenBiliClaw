@@ -40,6 +40,9 @@ Phase 1, so OBC occupies at most one slot in the total candidate set. Embedded
 NEKO uses `surface_copy_mode="lazy"`, eliminating background duplicate copy
 without moving quality, relevance, temporal, or sensitive-topic decisions out
 of OBC. Phase 2 sees only the selected four-field semantic view.
+Embedded maintenance keeps a 30-candidate active capacity, refills at most 10
+only below four ready candidates, and enforces a persistent 100k daily input-token
+ceiling for OBC background work. Capacity is never filled eagerly at startup.
 Discovery independently scores summary reliability in that same evaluation call;
 a present but vague or unverifiable summary is still withheld from Phase 1, with no extra model call.
 bounded candidates; Phase 2 sees only the selected title, topic, summary, and

@@ -34,6 +34,10 @@ Embedded NEKO selects `surface_copy_mode="lazy"`: no expression-copy coordinator
 is created and `recommendation.write_expression` stays at zero. Standalone FastAPI,
 Web and CLI retain the default background copy-ready flow. Semantic-ready reads are
 separate SQL paths and never weaken public copy-ready availability.
+NEKO also injects demand-driven maintenance: active capacity 30, soft target 10,
+refill below 4, one 10-item evaluation batch at a time, and a persistent 100k/day
+background-input gate split 50k/20k/30k across Discovery/Recommendation/Soul.
+Capacity is never interpreted as a startup fill target.
 The `content-eval-v8` response scores summary reliability in the existing evaluation
 call; all three components must be finite and at least 0.75 for proactive handoff.
                 parked when canonical available = 0

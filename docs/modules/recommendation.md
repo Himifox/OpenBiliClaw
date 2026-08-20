@@ -28,6 +28,10 @@ Core 内部最多返回 3 条供宿主适配层取排名第 1 条；这不等于
 NEKO Phase 1 只决定“现在是否适合提起”，OBC 仍负责“是否值得推荐”。lazy 宿主路径
 后台 `recommendation.write_expression` 为 0，最终表达只由 NEKO Phase 2 负责。
 
+NEKO 内嵌维护不再追逐 300 条启动库存：30 是有效候选逻辑容量，10 是单批补货软目标，
+只有有效候选少于 4 条才允许工作。每批最多评估 10 条且只有一个 worker；达到 4 条后
+停止后台发现。数据库旧行不被破坏性删除，超出逻辑窗口的记录随既有生命周期自然退出。
+
 `build_proactive_candidates()` 把非消费式推荐预览投影为三组宿主数据：Tracking 只保存
 稳定 `candidate_id`、内容身份、链接、期限和私有投递引用；Semantics 只包含有界的
 `title/topic/summary/reason_codes/source/author/type/confidence/freshness`；Policy 记录敏感

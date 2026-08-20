@@ -422,6 +422,13 @@ class ContinuousRefreshController:
     # we can tune in tests.
     discovery_limit: int = 30
     pool_target_count: int = 300
+    # Embedded hosts separate a small demand target from the logical active
+    # capacity. Standalone construction leaves both at the historical target.
+    pool_capacity_count: int | None = None
+    refill_trigger_count: int | None = None
+    refill_batch_size: int = 30
+    refill_cooldown_seconds: float = 0.0
+    surface_copy_mode: str = "background"
     pool_source_shares: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
     )
@@ -525,6 +532,85 @@ class ContinuousRefreshController:
     _last_llm_gate_allowed: bool = field(default=True, init=False)
     _startup_maintenance_completed: bool = field(default=False, init=False)
     _last_pool_maintenance_succeeded: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        self.pool_target_count = max(1, int(self.pool_target_count))
+        self.pool_capacity_count = max(
+            self.pool_target_count,
+            int(self.pool_capacity_count or self.pool_target_count),
+        )
+        self.refill_trigger_count = max(
+            1,
+            min(
+                self.pool_target_count,
+                int(self.refill_trigger_count or self.pool_target_count),
+            ),
+        )
+        self.refill_batch_size = max(1, min(30, int(self.refill_batch_size)))
+        self.refill_cooldown_seconds = max(0.0, float(self.refill_cooldown_seconds))
+
+    def background_refill_needed(self) -> bool:
+        """Return whether ready inventory is below the host trigger."""
+
+        try:
+            available = int(
+                self.database.count_pool_candidates(
+                    xhs_self_nickname=self._xhs_self_nickname()
+                )
+            )
+        except TypeError:
+            available = int(self.database.count_pool_candidates())
+        except Exception:
+            logger.debug("embedded refill readiness check failed", exc_info=True)
+            return False
+        return available < int(self.refill_trigger_count or self.pool_target_count)
+
+    def background_refill_allowed(self) -> bool:
+        """Return whether demand exists and the persisted cooldown elapsed."""
+
+        if not self.background_refill_needed():
+            return False
+        if not self._demand_driven_refill_enabled() or self.refill_cooldown_seconds <= 0:
+            return True
+        try:
+            state = self.memory_manager.load_discovery_runtime_state()
+            next_allowed = self._parse_iso_datetime(
+                str(state.get("maintenance_refill_next_allowed_at", ""))
+            )
+        except Exception:
+            logger.debug("embedded refill cooldown read failed", exc_info=True)
+            return False
+        return next_allowed is None or self._now() >= next_allowed
+
+    def record_background_refill_attempt(self, result: dict[str, int]) -> None:
+        """Persist cooldown/backoff so restart cannot trigger a refill burst."""
+
+        evaluated = max(0, int(result.get("evaluated", 0) or 0))
+        if evaluated <= 0 or not self._demand_driven_refill_enabled():
+            return
+        cached = max(0, int(result.get("cached", 0) or 0))
+        now = self._now()
+
+        def _record(state: dict[str, object]) -> None:
+            previous = max(0, int(state.get("maintenance_refill_backoff_level", 0) or 0))
+            level = 0 if cached > 0 else min(5, previous + 1)
+            delay = min(6 * 60 * 60, self.refill_cooldown_seconds * (2**level))
+            state.update(
+                {
+                    "maintenance_refill_last_at": now.isoformat(),
+                    "maintenance_refill_next_allowed_at": (
+                        now + timedelta(seconds=delay)
+                    ).isoformat(),
+                    "maintenance_refill_backoff_level": level,
+                    "maintenance_refill_last_evaluated": evaluated,
+                    "maintenance_refill_last_cached": cached,
+                }
+            )
+
+        self._update_discovery_runtime_state(_record)
+
+    def _demand_driven_refill_enabled(self) -> bool:
+        return int(self.refill_trigger_count or self.pool_target_count) < self.pool_target_count
 
     _signal_event_types = [
         "view",
@@ -683,6 +769,11 @@ class ContinuousRefreshController:
             "unread_count": self.database.count_unread_recommendations(),
             **self._pool_count_payload(pool_counts),
             "pool_target_count": self.pool_target_count,
+            "pool_capacity_count": int(self.pool_capacity_count or self.pool_target_count),
+            "refill_trigger_count": int(
+                self.refill_trigger_count or self.pool_target_count
+            ),
+            "refill_batch_size": self.refill_batch_size,
             "last_discovered_count": self._int_state_value(state, "last_discovered_count"),
             "last_replenished_count": self._int_state_value(state, "last_replenished_count"),
             "recent_pool_topics": self._list_state_value(state, "recent_pool_topics"),
@@ -741,6 +832,11 @@ class ContinuousRefreshController:
 
             if not self._is_initialized():
                 return _result({"refreshed": False, "strategies": [], "reason": "not_initialized"})
+
+            if self._demand_driven_refill_enabled() and not self.background_refill_allowed():
+                return _result(
+                    {"refreshed": False, "strategies": [], "reason": "ready_threshold"}
+                )
 
             pool_at_cap = await self._enforce_pool_cap_async()
             await self._publish_pool_status_if_changed()
@@ -987,16 +1083,18 @@ class ContinuousRefreshController:
                 xhs_self_nickname=self._xhs_self_nickname()
             )
             self._update_llm_inventory_state(pool_available)
-            return pool_available >= self.pool_target_count
+            return pool_available >= int(self.pool_capacity_count or self.pool_target_count)
 
     def _pool_maintenance_kwargs(self) -> dict[str, object]:
         """Build the canonical arguments shared by sync and async runners."""
         return {
-            "target": self.pool_target_count,
+            "target": int(self.pool_capacity_count or self.pool_target_count),
             "raw_ceiling": self._raw_material_ceiling(),
             "source_share_quotas": self._source_target_counts(),
             "raw_source_share_quotas": self._raw_source_target_counts(),
-            "max_per_topic_group": max(3, self.pool_target_count // 10),
+            "max_per_topic_group": max(
+                3, int(self.pool_capacity_count or self.pool_target_count) // 10
+            ),
             "max_per_explore_cluster": 3,
             "stale_max_age_days": 14,
             "xhs_self_nickname": self._xhs_self_nickname(),
@@ -1053,7 +1151,9 @@ class ContinuousRefreshController:
         )
         if result.rolled_back:
             self._update_llm_inventory_state(result.available_before)
-            return result.available_before >= self.pool_target_count
+            return result.available_before >= int(
+                self.pool_capacity_count or self.pool_target_count
+            )
         self._last_pool_maintenance_succeeded = True
         self._update_llm_inventory_state(result.available_after)
         if int(getattr(result, "mutation_count", 0) or 0) > 0:
@@ -1120,7 +1220,9 @@ class ContinuousRefreshController:
                         fingerprint,
                         (self._now() - last_scan).total_seconds(),
                     )
-                    return pool_available >= self.pool_target_count
+                    return pool_available >= int(
+                        self.pool_capacity_count or self.pool_target_count
+                    )
 
         kwargs = self._pool_maintenance_kwargs()
         last_at_target = False
@@ -1150,7 +1252,9 @@ class ContinuousRefreshController:
                         xhs_self_nickname=self._xhs_self_nickname(),
                     )
                 self._update_llm_inventory_state(pool_available)
-                return pool_available >= self.pool_target_count
+                return pool_available >= int(
+                    self.pool_capacity_count or self.pool_target_count
+                )
 
             last_at_target = self._record_pool_maintenance_result(result)
             has_more = bool(getattr(result, "has_more", False))
@@ -1667,7 +1771,9 @@ class ContinuousRefreshController:
             └─ _loop_cover_prefetch()    60s   cache fresh-token covers (XHS)
         """
         self.run_startup_maintenance()
-        if self._llm_work_allowed():
+        if self._llm_work_allowed() and (
+            self.surface_copy_mode != "lazy" or self.background_refill_allowed()
+        ):
             with suppress(Exception):
                 await self.prepare_delight_candidates()
         self._warn_on_stranded_source_shares()
@@ -1789,6 +1895,9 @@ class ContinuousRefreshController:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
+            if self.surface_copy_mode == "lazy" and not self.background_refill_needed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
             with suppress(Exception):
                 await self._drain_pool_precompute_backlog()
             await asyncio.sleep(self.check_interval_seconds)
@@ -1834,14 +1943,17 @@ class ContinuousRefreshController:
         except Exception:
             before_pool_count = -1
         try:
-            if self.expression_copy_coordinator is None:
-                await engine.precompute_pool_copy(
-                    profile=profile, limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH
-                )
+            limit = (
+                min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, self.refill_batch_size)
+                if self._demand_driven_refill_enabled()
+                else _MAX_DISCOVERY_BACKFILL_PER_REFRESH
+            )
+            if self.surface_copy_mode == "lazy":
+                await engine.classify_pool_backlog(profile=profile, limit=limit)
+            elif self.expression_copy_coordinator is None:
+                await engine.precompute_pool_copy(profile=profile, limit=limit)
             else:
-                await engine.classify_pool_backlog(
-                    profile=profile, limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH
-                )
+                await engine.classify_pool_backlog(profile=profile, limit=limit)
         except Exception:
             logger.exception("Periodic classify drain failed")
             return
@@ -1910,6 +2022,9 @@ class ContinuousRefreshController:
             return
         if not self._is_initialized():
             return
+        if self.surface_copy_mode == "lazy" and not self.background_refill_needed():
+            self._profile_ready_observed = True
+            return
         self._profile_ready_observed = True
         engine = self.recommendation_engine
         classify_fn = getattr(engine, "classify_pool_backlog", None) if engine else None
@@ -1926,7 +2041,10 @@ class ContinuousRefreshController:
             "Soul profile became ready — kicking classify_pool_backlog to drain init-window backlog"
         )
         try:
-            await classify_fn(profile=profile, limit=100)
+            await classify_fn(
+                profile=profile,
+                limit=self.refill_batch_size if self._demand_driven_refill_enabled() else 100,
+            )
         except Exception:
             logger.exception("profile-ready classify_pool_backlog failed")
 
@@ -2073,6 +2191,9 @@ class ContinuousRefreshController:
             if not self._llm_work_allowed():
                 await asyncio.sleep(poll_seconds)
                 continue
+            if not self.background_refill_allowed():
+                await asyncio.sleep(poll_seconds)
+                continue
             with suppress(Exception):
                 planner.reclaim_leases()
             with suppress(Exception):
@@ -2100,8 +2221,9 @@ class ContinuousRefreshController:
             # branch. ``prepare_delight_candidates`` calls precompute_pool_copy
             # with limit=0, which still runs precompute_delight_scores on
             # the up-to-50 un-scored items (relevance >= 0.55).
-            with suppress(Exception):
-                await self.prepare_delight_candidates()
+            if self.surface_copy_mode != "lazy" or self.background_refill_needed():
+                with suppress(Exception):
+                    await self.prepare_delight_candidates()
             # Snapshot delight count BEFORE prepare so we can detect a
             # net new above-threshold delight (popup re-fetch trigger).
             delight_count_before = self._safe_count_delight_candidates()
@@ -2548,12 +2670,12 @@ class ContinuousRefreshController:
                 pool_available = self.database.count_pool_candidates()
             before_pool_count = int(pool_available)
             self._update_llm_inventory_state(before_pool_count)
-            if int(pool_available) >= self.pool_target_count:
+            if not self.background_refill_allowed():
                 logger.debug(
-                    "candidate eval drain skipped: reason=pool_at_cap "
-                    "pool_available=%s target=%s caller=%s",
+                    "candidate eval drain skipped: reason=ready_threshold "
+                    "pool_available=%s threshold=%s caller=%s",
                     pool_available,
-                    self.pool_target_count,
+                    self.refill_trigger_count,
                     reason,
                 )
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
@@ -2570,9 +2692,12 @@ class ContinuousRefreshController:
             if profile is None:
                 logger.info("candidate eval drain skipped: reason=no_profile caller=%s", reason)
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
+            effective_batch_size = self._candidate_eval_drain_batch_size(batch_size)
+            if self._demand_driven_refill_enabled():
+                effective_batch_size = min(self.refill_batch_size, effective_batch_size)
             result = await pipeline.drain_pending(
                 profile=profile,
-                batch_size=self._candidate_eval_drain_batch_size(batch_size),
+                batch_size=effective_batch_size,
             )
             drain_result = cast("dict[str, int]", result)
             evaluated = int(drain_result.get("evaluated", 0) or 0)
@@ -2587,7 +2712,7 @@ class ContinuousRefreshController:
             elif self.one_shot_expression_copy_callback is not None:
                 if not post_admission_copy_owned:
                     await self._safe_one_shot_expression_copy(profile=profile)
-            else:
+            elif self.surface_copy_mode != "lazy":
                 await self._safe_precompute_pool_copy(profile=profile)
                 await self._publish_precompute_replenishment_if_needed(
                     before_pool_count=before_pool_count
@@ -2888,6 +3013,11 @@ class ContinuousRefreshController:
             elif self.one_shot_expression_copy_callback is not None:
                 if not post_admission_copy_owned:
                     await self._safe_one_shot_expression_copy(profile=profile)
+            elif self.surface_copy_mode == "lazy":
+                await self.recommendation_engine.classify_pool_backlog(
+                    profile=profile,
+                    limit=self.refill_batch_size,
+                )
             else:
                 await self._safe_precompute_pool_copy(profile=profile)
             # Pre-warm supergroup-merge embeddings so the popup's "换一批"
@@ -3338,7 +3468,8 @@ class ContinuousRefreshController:
         return plan
 
     def _raw_material_ceiling(self) -> int:
-        return max(self.pool_target_count * 2, self.pool_target_count + 120)
+        capacity = int(self.pool_capacity_count or self.pool_target_count)
+        return max(capacity * 2, capacity + 120)
 
     def _source_target_counts(self, *, total: int | None = None) -> dict[str, int]:
         target_total = self.pool_target_count if total is None else max(0, int(total))

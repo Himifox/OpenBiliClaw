@@ -261,6 +261,7 @@ class LLMService:
     # preserves prior behaviour for tests / standalone callers that
     # don't care about cost tracking.
     usage_recorder: object | None = None
+    background_token_budget: object | None = None
     module_overrides: Mapping[str, ModuleOverride] = field(default_factory=dict)
     concurrency: int = DEFAULT_LLM_CONCURRENCY
     concurrency_gate: LLMConcurrencyGate | None = None
@@ -272,6 +273,24 @@ class LLMService:
         self.concurrency = _coerce_concurrency(self.concurrency)
         if self.concurrency_gate is None:
             self.concurrency_gate = LLMConcurrencyGate(self.concurrency)
+
+    async def _reserve_background_tokens(
+        self,
+        *,
+        caller: str,
+        messages: list[dict[str, Any]],
+    ) -> object | None:
+        budget = self.background_token_budget
+        reserve = getattr(budget, "reserve", None)
+        if not callable(reserve):
+            return None
+        return await reserve(caller=caller, messages=messages)
+
+    async def _release_background_tokens(self, reservation: object | None) -> None:
+        budget = self.background_token_budget
+        release = getattr(budget, "release", None)
+        if callable(release):
+            await release(reservation)
 
     def cache_route_namespace(self, caller: str) -> str:
         """Return a credential-free namespace for exact semantic caches."""
@@ -561,6 +580,10 @@ class LLMService:
                 model=model,
             )
 
+        reservation = await self._reserve_background_tokens(
+            caller=caller,
+            messages=cast("list[dict[str, Any]]", messages),
+        )
         try:
             async with self._provider_slot(
                 caller=caller,
@@ -568,18 +591,20 @@ class LLMService:
             ):
                 response = await _do_llm_call()
         except LLMProviderError as exc:
+            await self._release_background_tokens(reservation)
             raise LLMProviderExecutionError(str(exc)) from exc
-        if not response.content.strip():
-            raise LLMResponseContentError("LLM returned an empty response.")
-        # Best-effort usage ledger write. The recorder swallows its own
-        # exceptions so a billing-table hiccup never affects the LLM
-        # response that just succeeded.
+        except BaseException:
+            await self._release_background_tokens(reservation)
+            raise
         recorder = self.usage_recorder
         if recorder is not None:
             record_fn = getattr(recorder, "record", None)
             if callable(record_fn):
                 with suppress(Exception):
                     record_fn(response, caller=caller)
+        await self._release_background_tokens(reservation)
+        if not response.content.strip():
+            raise LLMResponseContentError("LLM returned an empty response.")
         return response
 
     async def complete_structured_task(
@@ -748,19 +773,28 @@ class LLMService:
                 model=model,
             )
 
+        reservation = await self._reserve_background_tokens(
+            caller=caller,
+            messages=messages,
+        )
         try:
             async with self._provider_slot(caller=caller):
                 response = await _do_llm_call()
         except LLMProviderError as exc:
+            await self._release_background_tokens(reservation)
             raise LLMProviderExecutionError(str(exc)) from exc
-        if not response.content.strip():
-            raise LLMResponseContentError("LLM returned an empty response.")
+        except BaseException:
+            await self._release_background_tokens(reservation)
+            raise
         recorder = self.usage_recorder
         if recorder is not None:
             record_fn = getattr(recorder, "record", None)
             if callable(record_fn):
                 with suppress(Exception):
                     record_fn(response, caller=caller)
+        await self._release_background_tokens(reservation)
+        if not response.content.strip():
+            raise LLMResponseContentError("LLM returned an empty response.")
         return response
 
     async def complete_with_tools(

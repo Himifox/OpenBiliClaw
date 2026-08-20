@@ -2,6 +2,14 @@
 
 > 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博和通用 Web 等来源主动寻找潜在会喜欢的内容。
 
+## NEKO 内嵌补货边界
+
+独立模式继续遵循既有池目标。宿主注入维护策略时，Discovery 只在有效候选少于 4 条
+时启动：精确缓存和本地规则优先，剩余不确定候选每批最多 10 条进入 LLM，且同时只有
+一个评估 worker。批次冷却和低产出退避写入 runtime state，重启不能绕过。关键词、
+来源发现与评估共用每日 50k 输入预算；模块预算或 OBC 100k 总预算耗尽时，请求在
+provider 调用前失败关闭，已有候选仍可读取。
+
 API daemon 的候选 admission 成功后只同步调用轻量 expression `notify()`，不会 inline 或 await 文案 provider；generation-owned coordinator 按 durable `admitted_pending_copy` 连续补齐文案，因此评估 worker 可立即继续补位。OpenClaw direct one-shot 没有 daemon owner：它在 admission commit 后 await `expression-copy(limit=4, max_extra_requests=0)`，首 batch 的有效 subset 立即进入 canonical pool，剩余 pending-copy 留给下一次 operation；若首 batch 全部无效，本次可服务池仍可能为空，但不会留下 copy/provider task。`drain_pending()` 会随原有 metrics 返回结构化 post-admission copy receipt；refresh 仅在本轮没有 callback owner 时执行 copy 兜底，避免同一 durable admission 被 controller 收尾再次调用。
 
 ## 概述

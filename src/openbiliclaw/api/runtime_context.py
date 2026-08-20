@@ -423,6 +423,8 @@ class RuntimeContext:
     # Embedded hosts may defer user-facing copy until an explicit surface
     # request. This stable setting survives hot reloads.
     surface_copy_mode: str = "background"
+    # Optional host-owned maintenance limits also survive hot reloads.
+    maintenance_policy: Any = None
     pool_inventory_commit_callback: Any = field(init=False, repr=False, compare=False)
     _pool_inventory_commit_subscribers: list[Any] = field(
         default_factory=list,
@@ -730,6 +732,7 @@ class RuntimeContext:
             TrendingStrategy,
         )
         from openbiliclaw.llm import build_llm_registry
+        from openbiliclaw.llm.background_budget import BackgroundTokenBudget
         from openbiliclaw.llm.concurrency import LLMConcurrencyGate, background_llm_concurrency
         from openbiliclaw.llm.registry import build_embedding_service
         from openbiliclaw.llm.service import LLMService, module_overrides_from_config
@@ -754,6 +757,13 @@ class RuntimeContext:
             provider_overrides=self.llm_provider_overrides,
         )
         new_usage_recorder = UsageRecorder(sink=self.database)
+        maintenance_policy = self.maintenance_policy
+        background_token_budget = (
+            BackgroundTokenBudget(self.database, maintenance_policy)
+            if maintenance_policy is not None
+            and getattr(maintenance_policy, "daily_input_token_budget", None) is not None
+            else None
+        )
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_gate = self.llm_concurrency_gate or LLMConcurrencyGate(llm_concurrency)
@@ -772,6 +782,7 @@ class RuntimeContext:
             registry=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
+            background_token_budget=background_token_budget,
             module_overrides=new_module_overrides,
             concurrency=llm_concurrency,
             concurrency_gate=new_llm_gate,
@@ -854,6 +865,7 @@ class RuntimeContext:
             llm=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
+            background_token_budget=background_token_budget,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
             preference_prompt_view=str(getattr(soul_cfg, "preference_prompt_view", "legacy")),
             awareness_prompt_view=str(getattr(soul_cfg, "awareness_prompt_view", "compact-v1")),
@@ -953,9 +965,25 @@ class RuntimeContext:
             0,
             int(getattr(new_config.scheduler, "copy_ready_target_count", 0) or 0),
         )
+        effective_pool_target = int(
+            getattr(
+                maintenance_policy,
+                "ready_soft_target",
+                getattr(new_config.scheduler, "pool_target_count", 0),
+            )
+        )
+        effective_pool_capacity = int(
+            getattr(maintenance_policy, "pool_capacity", effective_pool_target)
+        )
+        effective_stop_threshold = int(
+            getattr(maintenance_policy, "ready_stop_threshold", effective_pool_target)
+        )
+        effective_refill_batch_size = int(
+            getattr(maintenance_policy, "refill_batch_size", 30)
+        )
         effective_copy_target = min(
             configured_copy_target,
-            max(0, int(getattr(new_config.scheduler, "pool_target_count", 0) or 0)),
+            max(0, effective_pool_target),
         )
         new_recommendation_engine = RecommendationEngine(
             llm=new_llm_service,
@@ -965,10 +993,7 @@ class RuntimeContext:
             task_registry=self.task_registry,
             xhs_self_info_provider=_xhs_self_info_provider,
             copy_ready_target_count=effective_copy_target,
-            pool_available_target_count=max(
-                0,
-                int(getattr(new_config.scheduler, "pool_target_count", 0) or 0),
-            ),
+            pool_available_target_count=max(0, effective_pool_target),
             visual_profile_enabled=bool(
                 getattr(getattr(new_config, "discovery", None), "visual_profile_enabled", False)
             ),
@@ -1132,7 +1157,7 @@ class RuntimeContext:
         new_candidate_pipeline = DiscoveryCandidatePipeline(
             database=self.database,
             discovery_engine=new_discovery_engine,
-            pool_target_count=new_config.scheduler.pool_target_count,
+            pool_target_count=effective_pool_capacity,
             admission_min_score=admission_min_score,
             min_eval_batch_size=int(getattr(new_config.scheduler, "eval_min_batch_size", 15)),
             max_eval_wait_seconds=float(
@@ -1463,7 +1488,14 @@ class RuntimeContext:
             keyword_planner=new_keyword_planner,
             keyword_fetch=new_keyword_fetch,
             source_incremental_sync=new_source_incremental_sync,
-            pool_target_count=new_config.scheduler.pool_target_count,
+            pool_target_count=effective_pool_target,
+            pool_capacity_count=effective_pool_capacity,
+            refill_trigger_count=effective_stop_threshold,
+            refill_batch_size=effective_refill_batch_size,
+            refill_cooldown_seconds=float(
+                getattr(maintenance_policy, "refill_cooldown_seconds", 0)
+            ),
+            surface_copy_mode=self.surface_copy_mode,
             pool_source_shares=_pool_source_shares_from_config(new_config),
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
             trending_refresh_minutes=int(
@@ -1515,7 +1547,7 @@ class RuntimeContext:
             status_counts = self.database.count_discovery_candidates_by_status()
             return CandidateEvalSnapshot(
                 available=int(readiness.get("available", 0)),
-                target=int(new_config.scheduler.pool_target_count),
+                target=effective_pool_target,
                 pending_eval=int(
                     status_counts.get(
                         "pending_eval_ready",
@@ -1570,16 +1602,20 @@ class RuntimeContext:
             if expression_coordinator is not None:
                 expression_coordinator.notify("candidate_commit")
 
-        candidate_eval_workers = effective_candidate_eval_workers(
-            int(getattr(discovery_cfg, "candidate_eval_concurrency", 3)),
-            llm_concurrency,
+        candidate_eval_workers = (
+            1
+            if maintenance_policy is not None
+            else effective_candidate_eval_workers(
+                int(getattr(discovery_cfg, "candidate_eval_concurrency", 3)),
+                llm_concurrency,
+            )
         )
         new_candidate_eval_coordinator = CandidateEvalCoordinator(
             pipeline=new_candidate_pipeline,
             snapshot_provider=_candidate_eval_snapshot,
             profile_provider=cast("Any", getattr(new_soul_engine, "get_profile", lambda: None)),
             worker_count=candidate_eval_workers,
-            batch_size=30,
+            batch_size=effective_refill_batch_size,
             supply_callback=_request_candidate_supply,
             post_commit_callback=_precompute_committed_candidates,
             on_admitted=(
@@ -1589,9 +1625,11 @@ class RuntimeContext:
                     else None
                 )
             ),
+            on_batch_completed=new_runtime_controller.record_background_refill_attempt,
             work_allowed=lambda: (
                 new_runtime_controller._is_initialized()  # noqa: SLF001
                 and new_runtime_controller._llm_work_allowed()  # noqa: SLF001
+                and new_runtime_controller.background_refill_allowed()
             ),
             # Pool-share fairness (spec 2026-07-20, D7): run the controller's
             # share rebalance + deficit summary each coordinator tick before
@@ -1601,6 +1639,9 @@ class RuntimeContext:
             pre_admit_hook=getattr(new_runtime_controller, "run_pool_share_maintenance", None),
             safety_wake_seconds=float(
                 getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
+            ),
+            refill_cooldown_seconds=float(
+                getattr(maintenance_policy, "refill_cooldown_seconds", 0)
             ),
         )
         new_runtime_controller.candidate_eval_coordinator = new_candidate_eval_coordinator
@@ -2096,6 +2137,7 @@ def build_runtime_context(
     llm_provider_overrides: dict[str, Any] | None = None,
     host_config_transform: Any = None,
     surface_copy_mode: str = "background",
+    maintenance_policy: Any = None,
 ) -> RuntimeContext:
     """Construct a fully-wired ``RuntimeContext`` from a ``Config``.
 
@@ -2155,6 +2197,7 @@ def build_runtime_context(
         llm_provider_overrides=dict(llm_provider_overrides or {}),
         host_config_transform=host_config_transform,
         surface_copy_mode=surface_copy_mode,
+        maintenance_policy=maintenance_policy,
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -2174,6 +2217,7 @@ def build_degraded_runtime_context(
     llm_provider_overrides: dict[str, Any] | None = None,
     host_config_transform: Any = None,
     surface_copy_mode: str = "background",
+    maintenance_policy: Any = None,
     exc: Exception | None = None,
 ) -> RuntimeContext:
     """Construct a minimal context that can serve config recovery endpoints.
@@ -2242,6 +2286,7 @@ def build_degraded_runtime_context(
         llm_provider_overrides=dict(llm_provider_overrides or {}),
         host_config_transform=host_config_transform,
         surface_copy_mode=surface_copy_mode,
+        maintenance_policy=maintenance_policy,
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,

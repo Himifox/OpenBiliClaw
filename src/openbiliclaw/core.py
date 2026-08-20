@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from openbiliclaw.recommendation.proactive_candidate import (
         ProactiveRecommendationCandidate,
     )
+    from openbiliclaw.runtime.maintenance_policy import MaintenancePolicy
     from openbiliclaw.soul.profile import OnionProfile
 
 
@@ -68,6 +69,7 @@ class OpenBiliClawCore:
         llm_provider_overrides: dict[str, LLMProvider] | None = None,
         host_config_transform: Callable[[Config], Config] | None = None,
         surface_copy_mode: Literal["background", "lazy"] = "background",
+        maintenance_policy: MaintenancePolicy | None = None,
         allow_degraded: bool = True,
     ) -> Self:
         """Build a fully wired Core from configuration and optional adapters."""
@@ -92,6 +94,7 @@ class OpenBiliClawCore:
                 llm_provider_overrides=llm_provider_overrides,
                 host_config_transform=host_config_transform,
                 surface_copy_mode=surface_copy_mode,
+                maintenance_policy=maintenance_policy,
             )
         except RegistryBuildError as exc:
             if not allow_degraded:
@@ -104,6 +107,7 @@ class OpenBiliClawCore:
                 llm_provider_overrides=llm_provider_overrides,
                 host_config_transform=host_config_transform,
                 surface_copy_mode=surface_copy_mode,
+                maintenance_policy=maintenance_policy,
                 exc=exc,
             )
         runtime_config = getattr(context, "config", None) or runtime_config

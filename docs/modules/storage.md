@@ -4,6 +4,10 @@
 
 `src/openbiliclaw/storage/` 负责本地 SQLite 数据库、schema 初始化、候选池计数和高频读写路径。它不理解 runtime state 或用户画像，只提供确定性的持久化 API。
 
+`query_llm_usage_today_by_caller()` 从既有 `llm_usage` 聚合本地自然日输入 Token，供宿主
+重启后继续预算计数；它不保存 Prompt 或正文。补货的最近时间、下次允许时间和退避等级
+沿用 discovery runtime state，进程重启不会清空冷却。
+
 本模块当前承担六类边界：
 
 - `content_cache.quality_score / summary_quality_score / evaluation_contract_version` 对旧行保持

@@ -95,9 +95,11 @@ class CandidateEvalCoordinator:
         supply_callback: Any | None = None,
         post_commit_callback: Any | None = None,
         on_admitted: Callable[[int], None] | None = None,
+        on_batch_completed: Callable[[dict[str, int]], None] | None = None,
         work_allowed: Any | None = None,
         pre_admit_hook: Callable[[], None] | None = None,
         safety_wake_seconds: float = 60.0,
+        refill_cooldown_seconds: float = 0.0,
         time_fn: Any = time.monotonic,
     ) -> None:
         self.pipeline = pipeline
@@ -116,8 +118,10 @@ class CandidateEvalCoordinator:
         self.supply_callback = supply_callback
         self.post_commit_callback = post_commit_callback
         self.on_admitted = on_admitted
+        self.on_batch_completed = on_batch_completed
         self.work_allowed = work_allowed
         self.safety_wake_seconds = max(0.01, float(safety_wake_seconds))
+        self.refill_cooldown_seconds = max(0.0, float(refill_cooldown_seconds))
         self.time_fn = time_fn
 
         self._wake_event = asyncio.Event()
@@ -138,6 +142,7 @@ class CandidateEvalCoordinator:
         self._no_progress_level = 0
         self._supply_streak = 0
         self._supply_cooldown_until = 0.0
+        self._refill_cooldown_until = 0.0
         self._supply_starvation_warned = False
 
         self.state = "idle"
@@ -193,6 +198,12 @@ class CandidateEvalCoordinator:
                     )
                     continue
                 self._backoff_until = 0.0
+                if self._refill_cooldown_until > now:
+                    self.state = "refill_cooldown"
+                    await self._wait_for_activity(
+                        min(self.safety_wake_seconds, self._refill_cooldown_until - now)
+                    )
+                    continue
 
                 self._run_pre_admit_hook()
                 snapshot = self._snapshot()
@@ -253,6 +264,7 @@ class CandidateEvalCoordinator:
             "candidate_eval_backoff_until": self._backoff_until,
             "candidate_eval_supply_streak": self._supply_streak,
             "candidate_eval_supply_cooldown_until": self._supply_cooldown_until,
+            "candidate_eval_refill_cooldown_until": self._refill_cooldown_until,
             "candidate_eval_last_error": self.last_error,
             "candidate_eval_last_batch_seconds": self.last_batch_seconds,
             "candidate_eval_last_cached": self.last_cached,
@@ -377,6 +389,22 @@ class CandidateEvalCoordinator:
             self.last_batch_seconds = float(getattr(outcome, "elapsed_seconds", 0.0) or 0.0)
             self.last_cached = int(result.get("cached", 0))
             self.last_rejected = int(result.get("rejected", 0))
+            if self.on_batch_completed is not None:
+                try:
+                    self.on_batch_completed(
+                        {
+                            "evaluated": int(result.get("evaluated", 0) or 0),
+                            "cached": self.last_cached,
+                            "rejected": self.last_rejected,
+                        }
+                    )
+                except Exception:
+                    logger.debug("candidate batch completion callback failed", exc_info=True)
+            if int(result.get("evaluated", 0)) > 0 and self.refill_cooldown_seconds > 0:
+                self._refill_cooldown_until = max(
+                    self._refill_cooldown_until,
+                    self.time_fn() + self.refill_cooldown_seconds,
+                )
             self._rate_limit_streak = 0
             self._transient_streak = 0
             if int(result.get("evaluated", 0)) > 0 and self.last_cached <= 0:

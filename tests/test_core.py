@@ -212,12 +212,19 @@ def test_core_create_forwards_host_llm_provider_overrides(
 ) -> None:
     from openbiliclaw.api import runtime_context as runtime_context_module
     from openbiliclaw.config import Config
+    from openbiliclaw.runtime.maintenance_policy import MaintenancePolicy
 
     provider = object()
     def transform(config: Config) -> Config:
         return config
     context = _Context()
     captured: dict[str, Any] = {}
+    maintenance_policy = MaintenancePolicy(
+        pool_capacity=30,
+        ready_soft_target=10,
+        ready_stop_threshold=4,
+        refill_batch_size=10,
+    )
 
     def _build(config: Any, **kwargs: Any) -> _Context:
         captured.update(kwargs)
@@ -231,11 +238,13 @@ def test_core_create_forwards_host_llm_provider_overrides(
         Config(),
         llm_provider_overrides={"neko-conversation": provider},  # type: ignore[dict-item]
         host_config_transform=transform,
+        maintenance_policy=maintenance_policy,
     )
 
     assert core.context is context
     assert captured["llm_provider_overrides"] == {"neko-conversation": provider}
     assert captured["host_config_transform"] is transform
+    assert captured["maintenance_policy"] is maintenance_policy
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,12 @@ An embedded host may select `"lazy"`: expression-copy coordination is not
 created or restarted, while `preview_proactive_candidates()` reads the separate
 semantic-ready pool. An explicit `recommend()` call still generates and caches
 copy before recording delivery. Hot reload preserves this host-owned mode.
+`maintenance_policy` is another reload-stable host control. NEKO injects a
+demand-driven policy with active capacity 30, soft target 10, refill only below
+4 ready candidates, one worker and at most 10 candidates per batch. It also
+enforces a persistent 100,000-token daily OBC background input ceiling split
+50k/20k/30k across Discovery/Recommendation/Soul. Capacity is never treated as
+a startup fill target.
 If the LLM registry cannot be built, the default `allow_degraded=True` creates a
 recovery-capable Core. Set it to `False` when an embedding host prefers startup
 to fail immediately. `reload()` never moves a live database: changing
@@ -68,6 +74,7 @@ profile, recommendation, and dialogue services stay inside Core.
 
 1. Construct one Core per local OpenBiliClaw data directory and inject the
    NEKO-managed provider under the configured OpenBiliClaw instance ID.
+   Inject a host-owned `MaintenancePolicy` with `surface_copy_mode="lazy"`.
 2. Enter its async lifecycle from NEKO's process supervisor.
 3. Read `preview_proactive_candidates()` before NEKO Phase 1. Preview only reads
    semantic-ready canonical pool rows: it does not refresh sources, call an LLM,
