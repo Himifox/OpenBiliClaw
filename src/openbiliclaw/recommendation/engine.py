@@ -5424,6 +5424,11 @@ class RecommendationEngine:
                     if row.get("quality_score") is not None
                     else None
                 ),
+                summary_quality_score=(
+                    float(row["summary_quality_score"])
+                    if row.get("summary_quality_score") is not None
+                    else None
+                ),
                 evaluation_contract_version=str(
                     row.get("evaluation_contract_version", "") or ""
                 ),

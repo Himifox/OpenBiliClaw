@@ -84,7 +84,8 @@ def _recommendation(
             topic_group=topic,
             relevance_score=1.0,
             quality_score=1.0,
-            evaluation_contract_version="content-eval-v7",
+            summary_quality_score=1.0,
+            evaluation_contract_version="content-eval-v8",
         ),
         expression="你昨晚连续看了五个相关视频。",
         topic_label=topic,
@@ -198,20 +199,31 @@ def test_sensitive_advice_is_denied_even_with_current_context() -> None:
 
 
 @pytest.mark.parametrize(
-    ("quality", "relevance", "description", "topic", "version", "expected"),
+    (
+        "quality",
+        "relevance",
+        "summary_quality",
+        "description",
+        "topic",
+        "version",
+        "expected",
+    ),
     [
-        (0.7499, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 0),
-        (0.75, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 1),
-        (1.0, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 1),
-        (None, 1.0, "可靠摘要", "Agent 架构", "content-eval-v7", 0),
-        (1.0, 1.0, "", "Agent 架构", "content-eval-v7", 0),
-        (1.0, 1.0, "可靠摘要", "", "content-eval-v7", 0),
-        (1.0, 1.0, "可靠摘要", "Agent 架构", "", 0),
+        (0.7499, 1.0, 1.0, "可靠摘要", "Agent 架构", "content-eval-v8", 0),
+        (0.75, 1.0, 1.0, "可靠摘要", "Agent 架构", "content-eval-v8", 1),
+        (1.0, 1.0, 0.7499, "可靠摘要", "Agent 架构", "content-eval-v8", 0),
+        (1.0, 1.0, 0.75, "可靠摘要", "Agent 架构", "content-eval-v8", 1),
+        (1.0, 1.0, None, "可靠摘要", "Agent 架构", "content-eval-v8", 0),
+        (None, 1.0, 1.0, "可靠摘要", "Agent 架构", "content-eval-v8", 0),
+        (1.0, 1.0, 1.0, "", "Agent 架构", "content-eval-v8", 0),
+        (1.0, 1.0, 1.0, "可靠摘要", "", "content-eval-v8", 0),
+        (1.0, 1.0, 1.0, "可靠摘要", "Agent 架构", "", 0),
     ],
 )
 def test_candidate_confidence_gate_fails_closed(
     quality: float | None,
     relevance: float,
+    summary_quality: float | None,
     description: str,
     topic: str,
     version: str,
@@ -221,6 +233,7 @@ def test_candidate_confidence_gate_fails_closed(
     recommendation = _recommendation(description=description, topic=topic)
     recommendation.content.quality_score = quality
     recommendation.content.relevance_score = relevance
+    recommendation.content.summary_quality_score = summary_quality
     recommendation.content.evaluation_contract_version = version
 
     candidates = build_proactive_candidates(

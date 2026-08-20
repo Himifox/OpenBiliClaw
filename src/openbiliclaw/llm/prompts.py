@@ -1518,8 +1518,11 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "</task>\n\n"
     "<rules>\n"
     "1. 输出必须是严格 JSON,不要附带解释。\n"
-    "2. score 和 quality_score 范围必须在 0 到 1 之间。score 衡量与画像的相关性;"
-    "quality_score 衡量内容本身是否具体、可信、完整且值得消费,不得因画像匹配而抬高质量分。\n"
+    "2. score、quality_score 和 summary_quality_score 范围必须在 0 到 1 之间。"
+    "score 衡量与画像的相关性;quality_score 衡量内容本身是否具体、可信、完整且值得消费,"
+    "不得因画像匹配而抬高质量分;summary_quality_score 按非空 description 优先、否则 "
+    "body_text,只衡量所选字段清理后前 80 字能否独立、准确、具体地概括内容。"
+    "缺失、空泛、营销话术、仅复述标题或无法验证时必须低分。\n"
     "3. reason 仅供内部诊断,不是面向用户的推荐文案。写法(省 token):"
     "score 严格低于 0.5 的条目,reason 必须写成空串 "
     '""(这些条目达不到准入门槛、会被直接丢弃,写理由是纯浪费);'
@@ -1601,6 +1604,7 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "{\n"
     '  "score": 0.78,\n'
     '  "quality_score": 0.86,\n'
+    '  "summary_quality_score": 0.84,\n'
     '  "reason": "主题契合画像中的长期兴趣,内容角度有增量",\n'
     '  "topic_group": "生活方式",\n'
     '  "style_key": "social_chat",\n'
@@ -1699,6 +1703,8 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "2. results 数组长度必须与输入内容数量一致,顺序一一对应。\n"
     "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
     "quality_score(0-1,只衡量内容本身是否具体、可信、完整且值得消费)、"
+    "summary_quality_score(0-1,按非空 description 优先、否则 body_text,只衡量清理后前 80 字"
+    "是否能可靠概括内容)、"
     "reason、topic_group(2-4词粗分类)、style_key(13选1)、"
     "franchise_key(可空)、temporal_class、temporal_confidence、temporal_reason、"
     "temporal_validity_mode、temporal_valid_until、temporal_scope、temporal_evidence、"
@@ -1821,18 +1827,18 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "<output_schema>\n"
     "{\n"
     '  "results": [\n'
-    '    {"bvid": "BV1xxx", "score": 0.78, "quality_score": 0.86, "reason": "...", "topic_group": "认知科学", '
+    '    {"bvid": "BV1xxx", "score": 0.78, "quality_score": 0.86, "summary_quality_score": 0.84, "reason": "...", "topic_group": "认知科学", '
     '"style_key": "deep_focus", "franchise_key": "", "temporal_class": "evergreen", '
     '"temporal_confidence": 0.91, "temporal_reason": "核心价值不依赖当前时间", '
     '"temporal_validity_mode": "none", "temporal_valid_until": "", '
     '"temporal_scope": "none", "temporal_evidence": "", "temporal_state": "unknown"},\n'
-    '    {"bvid": "BV2xxx", "score": 0.72, "quality_score": 0.81, "reason": "...", "topic_group": "游戏摄影", '
+    '    {"bvid": "BV2xxx", "score": 0.72, "quality_score": 0.81, "summary_quality_score": 0.80, "reason": "...", "topic_group": "游戏摄影", '
     '"style_key": "aesthetic_browse", "franchise_key": "原神", '
     '"temporal_class": "versioned", "temporal_confidence": 0.82, '
     '"temporal_reason": "内容依赖游戏版本", "temporal_validity_mode": "version_state", '
     '"temporal_valid_until": "", "temporal_scope": "core", '
     '"temporal_evidence": "当前游戏版本", "temporal_state": "active"},\n'
-    '    {"bvid": "BV3xxx", "score": 0.45, "quality_score": 0.55, "reason": "", "topic_group": "美食", '
+    '    {"bvid": "BV3xxx", "score": 0.45, "quality_score": 0.55, "summary_quality_score": 0.42, "reason": "", "topic_group": "美食", '
     '"style_key": "social_chat", "franchise_key": "", "temporal_class": "current", '
     '"temporal_confidence": 0.74, "temporal_reason": "讨论依赖近期语境", '
     '"temporal_validity_mode": "freshness_only", "temporal_valid_until": "", '
@@ -1851,6 +1857,8 @@ def _build_sparse_batch_evaluation_system_prompt() -> str:
         (
             "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
             "quality_score(0-1,只衡量内容本身是否具体、可信、完整且值得消费)、"
+            "summary_quality_score(0-1,按非空 description 优先、否则 body_text,只衡量清理后前 80 字"
+            "是否能可靠概括内容)、"
             "reason、topic_group(2-4词粗分类)、style_key(13选1)、"
             "franchise_key(可空)、temporal_class、temporal_confidence、temporal_reason、"
             "temporal_validity_mode、temporal_valid_until、temporal_scope、temporal_evidence、"
@@ -1859,7 +1867,9 @@ def _build_sparse_batch_evaluation_system_prompt() -> str:
             "也可能是 ROW-WIRE-V1 表；表中的 defaults、columns、row 与同名 canonical "
             "字段完全等价。defaults 是所有 items/rows 共享的默认值,每项同名字段优先。"
             "每项包含请求内局部 id、title、author,以及非空的内容/互动字段。"
-            "每项必须原样带回输入里的 id,并包含 score(0-1)、quality_score(0-1)、reason、"
+            "每项必须原样带回输入里的 id,并包含 score(0-1)、quality_score(0-1)、"
+            "summary_quality_score(0-1,按非空 description 优先、否则 body_text,只衡量清理后前 80 字"
+            "是否能可靠概括内容)、reason、"
             "topic_group(2-4词粗分类)、style_key(13选1)、franchise_key(可空)、"
             "temporal_class、temporal_confidence、temporal_reason、temporal_validity_mode、"
             "temporal_valid_until、temporal_scope、temporal_evidence、temporal_state。\n",

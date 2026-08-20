@@ -6,7 +6,8 @@
 
 本模块当前承担六类边界：
 
-- `content_cache.quality_score / evaluation_contract_version` 对旧行保持 `NULL`，禁止从
+- `content_cache.quality_score / summary_quality_score / evaluation_contract_version` 对旧行保持
+  `NULL`，禁止从
   旧相关性分推导高质量；semantic-ready 与 copy-ready 使用独立读取条件。
 - `evaluation_result_cache` 只保存不可逆 key 摘要与验证后的结构化评估，保留 30 天、
   最多 20,000 条并按最旧访问淘汰；不保存标题、正文、画像或 Prompt。

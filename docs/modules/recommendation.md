@@ -21,7 +21,8 @@ runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extr
 `preview_semantic()` 与公开 copy-ready `preview()` 使用相同排序、去重、已展示、时效、
 不喜欢、链接和平台门禁，但前者不要求 `pool_expression`，也绝不生成文案。公开 Web、
 CLI、Popup 查询仍要求非空 copy，旧门禁没有全局放松。主动候选必须有当前评估版本、
-独立质量分、可靠正文摘要与完整时效证据；标题不再充当缺失摘要的兜底。
+独立内容质量分、相关性分、摘要可靠度分与完整时效证据；标题不再充当缺失摘要的
+兜底，摘要即使存在但 `summary_quality_score < 0.75` 也不能进入主动交接。
 
 Core 内部最多返回 3 条供宿主适配层取排名第 1 条；这不等于 Phase 1 接收 3 条。
 NEKO Phase 1 只决定“现在是否适合提起”，OBC 仍负责“是否值得推荐”。lazy 宿主路径

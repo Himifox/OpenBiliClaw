@@ -6,11 +6,18 @@
 
 ## 未发布
 
+- **主动候选摘要从存在性门禁升级为独立可靠度评分**：Discovery 的既有单条/批量
+  评估在同一次调用中新增 `summary_quality_score`，契约升级为 `content-eval-v8`；
+  `confidence=min(quality,relevance,summary_quality)`，摘要分量缺失、非有限、旧版本或
+  `<0.75` 时失败关闭。旧推荐表面仍可使用旧相关性结果，但旧行不进入主动交接，也不
+  写入 v8 精确缓存；新增评分不增加 LLM 请求，分量不进入 NEKO Prompt。
+
 - **Token 平衡的 NEKO 嵌入链路**：Core 新增默认兼容的
   `surface_copy_mode="background"|"lazy"`；lazy 不创建/重启 expression-copy owner，主动
   预览改读独立 semantic-ready 池，公开 Web/CLI/Popup 的 copy-ready 门禁保持不变。
-  Discovery 同次评估新增独立 `quality_score` 和 `content-eval-v7`，主动候选严格要求
-  `min(quality,relevance,summary)>=0.75`、可靠正文摘要、已评估 topic 和完整可投递时效，
+  Discovery 同次评估新增独立 `quality_score`，后续摘要可靠度加强后的当前契约为
+  `content-eval-v8`；主动候选严格要求三个独立分量均 `>=0.75`、可靠正文摘要、已评估
+  topic 和完整可投递时效，
   旧行未知值不补高分、每轮最多复审 5 条。精确 evaluator 结果以覆盖画像、负反馈、
   时间、embedding 与模型路由的摘要键持久复用（30 天/20,000 条），失败和正文证据不
   落库。Core 内部最多排序 3 条不再解释为 Phase 1 接收 3 条；NEKO 只取排名第 1 条。

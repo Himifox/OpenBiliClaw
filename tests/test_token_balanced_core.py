@@ -10,7 +10,12 @@ from openbiliclaw import OpenBiliClawCore
 from openbiliclaw.storage.database import Database
 
 
-def _cache_semantic_candidate(database: Database, bvid: str = "BVSEMANTIC") -> None:
+def _cache_semantic_candidate(
+    database: Database,
+    bvid: str = "BVSEMANTIC",
+    *,
+    summary_quality_score: float | None = 0.86,
+) -> None:
     database.cache_content(
         bvid,
         title="结构化状态减少上下文开销",
@@ -24,7 +29,8 @@ def _cache_semantic_candidate(database: Database, bvid: str = "BVSEMANTIC") -> N
         relevance_score=0.91,
         relevance_reason="与长期兴趣相关",
         quality_score=0.88,
-        evaluation_contract_version="content-eval-v7",
+        summary_quality_score=summary_quality_score,
+        evaluation_contract_version="content-eval-v8",
         temporal_class="evergreen",
         temporal_confidence=0.95,
         temporal_reason="核心价值不依赖当前时间",
@@ -52,6 +58,19 @@ def test_semantic_pool_does_not_relax_public_copy_gate(tmp_path) -> None:
     database.close()
 
 
+def test_semantic_pool_fails_closed_on_weak_or_unknown_summary_quality(tmp_path) -> None:
+    database = Database(tmp_path / "summary-quality.db")
+    database.initialize()
+    _cache_semantic_candidate(database, "BVUNKNOWN", summary_quality_score=None)
+    _cache_semantic_candidate(database, "BVWEAK", summary_quality_score=0.7499)
+    _cache_semantic_candidate(database, "BVPASS", summary_quality_score=0.75)
+
+    semantic = database.get_semantic_pool_candidates(limit=3)
+
+    assert [row["bvid"] for row in semantic] == ["BVPASS"]
+    database.close()
+
+
 def test_exact_evaluation_cache_survives_database_restart(tmp_path) -> None:
     path = tmp_path / "evaluation-cache.db"
     first = Database(path)
@@ -75,7 +94,8 @@ def test_exact_evaluation_cache_survives_database_restart(tmp_path) -> None:
         "2026-08-19T00:00:00Z",
         True,
         0.85,
-        "content-eval-v7",
+        0.82,
+        "content-eval-v8",
     ]
     first.put_evaluation_result_cache("digest", result)
     first.close()

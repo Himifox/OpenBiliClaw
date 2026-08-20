@@ -432,10 +432,13 @@ def build_proactive_candidates(
             continue
         quality = content.quality_score
         relevance = content.relevance_score
+        summary_quality = content.summary_quality_score
         if (
             quality is None
+            or summary_quality is None
             or not math.isfinite(float(quality))
             or not math.isfinite(float(relevance))
+            or not math.isfinite(float(summary_quality))
         ):
             continue
         expires = _parse_datetime(content.temporal_valid_until)
@@ -447,7 +450,7 @@ def build_proactive_candidates(
         confidence_components = CandidateConfidence(
             quality=min(1.0, max(0.0, float(quality))),
             relevance=min(1.0, max(0.0, float(relevance))),
-            summary=1.0,
+            summary=min(1.0, max(0.0, float(summary_quality))),
         )
         confidence = min(
             confidence_components.quality,

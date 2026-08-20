@@ -840,6 +840,47 @@ async def test_evaluate_content_passes_style_preferences_to_prompt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_content_records_independent_summary_quality() -> None:
+    llm_service = FakeLLMService(
+        '{"score":0.91,"quality_score":0.88,"summary_quality_score":0.76,'
+        '"reason":"匹配","topic_group":"系统","style_key":"deep_dive"}'
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    content = DiscoveredContent(
+        bvid="BV1SUMMARY",
+        title="结构化状态",
+        description="通过结构化状态替代冗长历史提示词。",
+        source_strategy="search",
+    )
+
+    await engine.evaluate_content(content, _build_profile())
+
+    assert content.quality_score == 0.88
+    assert content.summary_quality_score == 0.76
+    assert content.evaluation_contract_version == "content-eval-v8"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_without_summary_quality_stays_legacy() -> None:
+    llm_service = FakeLLMService(
+        '{"score":0.91,"quality_score":0.88,"reason":"匹配",'
+        '"topic_group":"系统","style_key":"deep_dive"}'
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    content = DiscoveredContent(
+        bvid="BV1LEGACY",
+        title="结构化状态",
+        description="通过结构化状态替代冗长历史提示词。",
+        source_strategy="search",
+    )
+
+    assert await engine.evaluate_content(content, _build_profile()) == 0.91
+    assert content.quality_score == 0.88
+    assert content.summary_quality_score is None
+    assert content.evaluation_contract_version == ""
+
+
+@pytest.mark.asyncio
 async def test_evaluate_content_passes_disliked_topics_to_prompt() -> None:
     llm_service = FakeLLMService(
         '{"score": 0.52, "reason": "命中避雷", "topic_group": "混剪", "style_key": "light_chat"}'
@@ -4726,7 +4767,7 @@ async def test_sparse_evaluation_repairs_multi_member_results_without_ids() -> N
     assert llm.ids_by_call == [["0", "1"], ["0"], ["0"]]
 
 
-def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams() -> None:
+def test_sparse_evaluation_is_the_v8_cache_default_with_explicit_rollback_seams() -> None:
     default_engine = ContentDiscoveryEngine()
     explicit_production_engine = ContentDiscoveryEngine(evaluation_candidate_transport="production")
     sparse_engine = ContentDiscoveryEngine(evaluation_candidate_transport="sparse-json")
@@ -4771,9 +4812,9 @@ def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams(
     assert _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT == "sparse-json"
     assert default_engine.evaluation_candidate_transport == "sparse-json"
     assert default_key == sparse_key
-    assert default_key.startswith("content-eval-v6:batch:")
+    assert default_key.startswith("content-eval-v8:batch:")
     assert default_key.endswith(":transport:sparse-json")
-    assert explicit_production_key.startswith("content-eval-v6:batch:")
+    assert explicit_production_key.startswith("content-eval-v8:batch:")
     assert ":transport:" not in explicit_production_key
     assert explicit_production_key != default_key
     assert row_key.endswith(":transport:row-wire-v1")
@@ -4789,8 +4830,8 @@ def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams(
         content(),
         profile_digest="profile",
     )
-    assert single_key.startswith("content-eval-v6:single:")
-    old_batch_key = default_key.replace("content-eval-v6:", "content-eval-v5:", 1)
+    assert single_key.startswith("content-eval-v8:single:")
+    old_batch_key = default_key.replace("content-eval-v8:", "content-eval-v7:", 1)
     default_engine._set_eval_cache_entry(
         old_batch_key,
         (0.9, "old", "old", "deep_focus", ""),
@@ -5501,7 +5542,7 @@ async def test_single_evaluation_parses_and_caches_temporal_metadata() -> None:
         assert item.temporal_evidence_complete is True
         assert item.temporal_evaluated is True
     assert len(llm.calls) == 1
-    assert {len(entry) for entry in engine._eval_cache.values()} == {17}
+    assert {len(entry) for entry in engine._eval_cache.values()} == {20}
     assert {entry[8] for entry in engine._eval_cache.values()} == {"v2"}
 
 

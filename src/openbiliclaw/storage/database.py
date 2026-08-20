@@ -1053,6 +1053,7 @@ CREATE TABLE IF NOT EXISTS content_cache (
     relevance_score REAL DEFAULT 0.0,
     relevance_reason TEXT DEFAULT '',
     quality_score REAL,
+    summary_quality_score REAL,
     evaluation_contract_version TEXT,
     temporal_class TEXT DEFAULT 'unknown',
     temporal_confidence REAL DEFAULT 0.0,
@@ -5292,6 +5293,7 @@ class Database:
                 kwargs.get("relevance_score", 0.0),
                 kwargs.get("relevance_reason", ""),
                 kwargs.get("quality_score"),
+                kwargs.get("summary_quality_score"),
                 kwargs.get("evaluation_contract_version"),
                 temporal_to_persist[0],
                 temporal_to_persist[1],
@@ -5375,6 +5377,7 @@ class Database:
                 relevance_score,
                 relevance_reason,
                 quality_score,
+                summary_quality_score,
                 evaluation_contract_version,
                 temporal_class,
                 temporal_confidence,
@@ -5408,7 +5411,7 @@ class Database:
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
@@ -5475,6 +5478,10 @@ class Database:
                 quality_score = COALESCE(
                     excluded.quality_score,
                     content_cache.quality_score
+                ),
+                summary_quality_score = COALESCE(
+                    excluded.summary_quality_score,
+                    content_cache.summary_quality_score
                 ),
                 evaluation_contract_version = COALESCE(
                     NULLIF(excluded.evaluation_contract_version, ''),
@@ -7390,6 +7397,28 @@ class Database:
             full_rows=True,
             require_copy=False,
         )
+        semantic_rows: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                confidence_components = (
+                    float(row["quality_score"]),
+                    float(row["relevance_score"]),
+                    float(row["summary_quality_score"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (
+                str(row.get("evaluation_contract_version") or "") != "content-eval-v8"
+                or not all(
+                    math.isfinite(value) and value >= 0.75
+                    for value in confidence_components
+                )
+                or not str(row.get("topic_group") or "").strip()
+                or not str(row.get("description") or row.get("body_text") or "").strip()
+            ):
+                continue
+            semantic_rows.append(row)
+        rows = semantic_rows
         scope = normalize_source_platform(source_platform)
         if scope:
             rows = [
@@ -10706,8 +10735,9 @@ class Database:
                                         COALESCE(pool_status, 'fresh') = 'fresh'
                                         AND (
                                             quality_score IS NULL
+                                            OR summary_quality_score IS NULL
                                             OR COALESCE(evaluation_contract_version, '')
-                                                != 'content-eval-v7'
+                                                != 'content-eval-v8'
                                         )
                                     )
                               )
@@ -10743,8 +10773,9 @@ class Database:
                             and float(row.get("relevance_score") or 0.0) > 0
                             and (
                                 row.get("quality_score") is None
+                                or row.get("summary_quality_score") is None
                                 or str(row.get("evaluation_contract_version") or "")
-                                != "content-eval-v7"
+                                != "content-eval-v8"
                             )
                         )
                         if quality_only:
@@ -12630,6 +12661,7 @@ class Database:
             "relevance_score": "REAL DEFAULT 0.0",
             "relevance_reason": "TEXT DEFAULT ''",
             "quality_score": "REAL",
+            "summary_quality_score": "REAL",
             "evaluation_contract_version": "TEXT",
             "candidate_tier": "TEXT DEFAULT 'primary'",
         }

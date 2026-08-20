@@ -298,7 +298,9 @@ canonical pool → aggregate signals + sensitive gate → Tracking / Semantics /
 NEKO host mode fixes `surface_copy_mode=lazy`: background
 `recommendation.write_expression=0`. Proactive admission requires current evaluator contract,
 verified `topic_group`, non-title summary, complete eligible temporal evidence, and
-`min(quality_score,relevance_score,summary_confidence)>=0.75`; unknown data fails closed.
+`min(quality_score,relevance_score,summary_quality_score)>=0.75`; the summary score comes
+from the same `content-eval-v8` call and measures whether description/body reliably summarizes
+the content. Unknown, non-finite, stale-version, or low components fail closed.
                                                                  └→ runtime background-task lifecycle
 
 interactive (dialogue / config probe) ──────────────┐

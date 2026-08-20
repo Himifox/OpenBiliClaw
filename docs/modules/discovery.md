@@ -21,9 +21,11 @@ API daemon 的候选 admission 成功后只同步调用轻量 expression `notify
 当前模块包含：
 
 - **高置信主动交接评估** — 同一次 evaluator 调用同时输出独立
-  `quality_score` 与既有 `relevance_score`，契约版本为 `content-eval-v7`；旧行保持
+  `quality_score`、`summary_quality_score` 与既有 `relevance_score`，契约版本为
+  `content-eval-v8`；摘要分量衡量 description/body 是否能独立、准确、具体地概括内容，
+  不再把“摘要非空”直接当作 1.0。旧行保持
   `NULL`，每轮最多复审 5 条。主动交接使用
-  `min(quality, relevance, summary) >= 0.75`，任一分量、主题、可靠摘要、完整时效证据
+  `min(quality, relevance, summary_quality) >= 0.75`，任一分量、主题、可靠摘要、完整时效证据
   或当前契约缺失时失败关闭，不把判断交给 NEKO Phase 1。
 - **精确评估复用** — 持久 cache key 覆盖内容指纹、画像/负反馈摘要、时效桶、来源、
   embedding 与实际模型路由 namespace；SQLite 仅存 key 摘要和验证后的结构化结果，

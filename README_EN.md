@@ -40,6 +40,8 @@ Phase 1, so OBC occupies at most one slot in the total candidate set. Embedded
 NEKO uses `surface_copy_mode="lazy"`, eliminating background duplicate copy
 without moving quality, relevance, temporal, or sensitive-topic decisions out
 of OBC. Phase 2 sees only the selected four-field semantic view.
+Discovery independently scores summary reliability in that same evaluation call;
+a present but vague or unverifiable summary is still withheld from Phase 1, with no extra model call.
 bounded candidates; Phase 2 sees only the selected title, topic, summary, and
 selection motive. Full profiles, raw behavior, URLs, and delivery identities do
 not enter either model prompt.

@@ -122,6 +122,7 @@ _EvalCacheEntryV5 = tuple[
     bool,
 ]
 _EvalCacheEntryV7 = tuple[*_EvalCacheEntryV5, float, str]
+_EvalCacheEntryV8 = tuple[*_EvalCacheEntryV5, float | None, float | None, str]
 _EvalCacheEntry = (
     tuple[float, str, str, str]
     | tuple[float, str, str, str, str]
@@ -129,6 +130,7 @@ _EvalCacheEntry = (
     | _EvalCacheEntryV5Legacy
     | _EvalCacheEntryV5
     | _EvalCacheEntryV7
+    | _EvalCacheEntryV8
 )
 _BILIBILI_CONTENT_ID_PATTERN = re.compile(r"^BV[0-9A-Za-z]+$")
 _CANONICAL_STORAGE_KEY_PLATFORMS = frozenset(
@@ -170,7 +172,7 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
-EVALUATION_CONTRACT_VERSION = "content-eval-v7"
+EVALUATION_CONTRACT_VERSION = "content-eval-v8"
 _EVAL_BATCH_CACHE_VERSION = EVALUATION_CONTRACT_VERSION
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
@@ -468,15 +470,31 @@ def _apply_temporal_evaluation(
 
 def _decode_eval_cache_entry(
     cached: _EvalCacheEntry,
-) -> tuple[float, str, str, str, str, TemporalEvaluation, float | None, str]:
+) -> tuple[
+    float,
+    str,
+    str,
+    str,
+    str,
+    TemporalEvaluation,
+    float | None,
+    float | None,
+    str,
+]:
     """Decode v5 evaluator cache tuples and legacy 4/5/9-field entries."""
 
     score, reason, topic_group, style_key = cached[:4]
     franchise_key = cached[4] if len(cached) >= 5 else ""
     temporal = TemporalEvaluation()
     quality_score: float | None = None
+    summary_quality_score: float | None = None
     evaluation_contract_version = ""
-    if len(cached) >= 19:
+    if len(cached) >= 20:
+        cached_v8 = cast("_EvalCacheEntryV8", cached)
+        quality_score = cached_v8[17]
+        summary_quality_score = cached_v8[18]
+        evaluation_contract_version = cached_v8[19]
+    elif len(cached) >= 19:
         cached_v7 = cast("_EvalCacheEntryV7", cached)
         quality_score = cached_v7[17]
         evaluation_contract_version = cached_v7[18]
@@ -527,13 +545,14 @@ def _decode_eval_cache_entry(
         franchise_key,
         temporal,
         quality_score,
+        summary_quality_score,
         evaluation_contract_version,
     )
 
 
 def _eval_cache_entry_for_content(
     content: DiscoveredContent,
-) -> _EvalCacheEntryV7:
+) -> _EvalCacheEntryV8:
     """Build the v5 in-memory cache shape from an evaluated candidate."""
 
     return (
@@ -554,7 +573,8 @@ def _eval_cache_entry_for_content(
         content.temporal_next_review_at,
         content.temporal_evaluated_at,
         content.temporal_evidence_complete,
-        float(content.quality_score or 0.0),
+        content.quality_score,
+        content.summary_quality_score,
         content.evaluation_contract_version,
     )
 
@@ -803,6 +823,7 @@ class DiscoveredContent:
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
     relevance_reason: str = ""  # Why this is relevant to the user
     quality_score: float | None = None
+    summary_quality_score: float | None = None
     evaluation_contract_version: str = ""
     temporal_class: str = "unknown"  # Why this content's value may expire
     temporal_confidence: float = 0.0  # Evaluator confidence in temporal_class
@@ -907,6 +928,7 @@ class DiscoveredContent:
             "relevance_score": self.relevance_score,
             "relevance_reason": self.relevance_reason,
             "quality_score": self.quality_score,
+            "summary_quality_score": self.summary_quality_score,
             "evaluation_contract_version": self.evaluation_contract_version,
             "temporal_class": self.temporal_class,
             "temporal_confidence": self.temporal_confidence,
@@ -1214,10 +1236,14 @@ class ContentDiscoveryEngine:
             return None
         restored = cast("_EvalCacheEntry", tuple(persisted))
         try:
-            *_, quality, version = _decode_eval_cache_entry(restored)
+            *_, quality, summary_quality, version = _decode_eval_cache_entry(restored)
         except (TypeError, ValueError, IndexError):
             return None
-        if quality is None or version != EVALUATION_CONTRACT_VERSION:
+        if (
+            quality is None
+            or summary_quality is None
+            or version != EVALUATION_CONTRACT_VERSION
+        ):
             return None
         cache[cache_key] = restored
         cache.move_to_end(cache_key)
@@ -1230,17 +1256,23 @@ class ContentDiscoveryEngine:
         while len(cache) > _EVAL_CACHE_MAX_ENTRIES:
             cache.popitem(last=False)
         try:
-            *_, quality, version = _decode_eval_cache_entry(entry)
+            *_, quality, summary_quality, version = _decode_eval_cache_entry(entry)
         except (TypeError, ValueError, IndexError):
             return
         # Legacy or partially repaired responses remain usable by the
         # copy-ready recommendation surfaces, but they are not authoritative
         # enough for the durable exact cache or proactive confidence gate.
-        if quality is None or not math.isfinite(quality) or version != EVALUATION_CONTRACT_VERSION:
+        if (
+            quality is None
+            or summary_quality is None
+            or not math.isfinite(quality)
+            or not math.isfinite(summary_quality)
+            or version != EVALUATION_CONTRACT_VERSION
+        ):
             return
         # Temporal evidence is a verbatim source excerpt. Keep those results
         # memory-only so the durable cache never stores title/body fragments.
-        if len(entry) < 19 or str(entry[12] or "").strip():
+        if len(entry) < 20 or str(entry[12] or "").strip():
             return
         database = getattr(self, "_database", None)
         persist = getattr(database, "put_evaluation_result_cache", None)
@@ -2166,9 +2198,17 @@ class ContentDiscoveryEngine:
         )
         cached = self._get_eval_cache_entry(cache_key)
         if cached is not None:
-            score, reason, topic_group, style_key, franchise_key, temporal, quality, version = (
-                _decode_eval_cache_entry(cached)
-            )
+            (
+                score,
+                reason,
+                topic_group,
+                style_key,
+                franchise_key,
+                temporal,
+                quality,
+                summary_quality,
+                version,
+            ) = _decode_eval_cache_entry(cached)
             normalized_reason = normalize_evaluation_reason(score, reason)
             if normalized_reason is not None:
                 content.relevance_score = score
@@ -2177,6 +2217,7 @@ class ContentDiscoveryEngine:
                 content.style_key = normalize_style_key(style_key)
                 content.franchise_key = franchise_key
                 content.quality_score = quality
+                content.summary_quality_score = summary_quality
                 content.evaluation_contract_version = version
                 _apply_temporal_evaluation(
                     content,
@@ -2271,8 +2312,12 @@ class ContentDiscoveryEngine:
             validated_score = self._validated_model_score(payload.get("score"))
             raw_quality_score = payload.get("quality_score")
             quality_score = self._validated_model_score(raw_quality_score)
+            raw_summary_quality_score = payload.get("summary_quality_score")
+            summary_quality_score = self._validated_model_score(raw_summary_quality_score)
             if validated_score is None or (
                 raw_quality_score is not None and quality_score is None
+            ) or (
+                raw_summary_quality_score is not None and summary_quality_score is None
             ):
                 raise ValueError("Expected finite content evaluation score in [0, 1]")
             score = validated_score
@@ -2303,8 +2348,11 @@ class ContentDiscoveryEngine:
 
         content.relevance_score = score
         content.quality_score = quality_score
+        content.summary_quality_score = summary_quality_score
         content.evaluation_contract_version = (
-            EVALUATION_CONTRACT_VERSION if quality_score is not None else ""
+            EVALUATION_CONTRACT_VERSION
+            if quality_score is not None and summary_quality_score is not None
+            else ""
         )
         content.relevance_reason = reason
         content.topic_group = topic_group
@@ -2466,9 +2514,17 @@ class ContentDiscoveryEngine:
                 # The cache tuple grew first to carry franchise_key and now
                 # temporal semantics. Keep both legacy 4/5-field shapes safe
                 # for in-flight processes during a rolling upgrade.
-                score, reason, topic_group, style_key, franchise_key, temporal, quality, version = (
-                    _decode_eval_cache_entry(cached)
-                )
+                (
+                    score,
+                    reason,
+                    topic_group,
+                    style_key,
+                    franchise_key,
+                    temporal,
+                    quality,
+                    summary_quality,
+                    version,
+                ) = _decode_eval_cache_entry(cached)
                 normalized_reason = normalize_evaluation_reason(score, reason)
                 if normalized_reason is None:
                     uncached_indices.append(i)
@@ -2480,6 +2536,7 @@ class ContentDiscoveryEngine:
                 content.style_key = style_key
                 content.franchise_key = franchise_key
                 content.quality_score = quality
+                content.summary_quality_score = summary_quality
                 content.evaluation_contract_version = version
                 _apply_temporal_evaluation(
                     content,
@@ -3544,7 +3601,16 @@ class ContentDiscoveryEngine:
             score = self._validated_model_score(item_result.get("score"))
             raw_quality_score = item_result.get("quality_score")
             quality_score = self._validated_model_score(raw_quality_score)
-            if score is None or (raw_quality_score is not None and quality_score is None):
+            raw_summary_quality_score = item_result.get("summary_quality_score")
+            summary_quality_score = self._validated_model_score(raw_summary_quality_score)
+            if (
+                score is None
+                or (raw_quality_score is not None and quality_score is None)
+                or (
+                    raw_summary_quality_score is not None
+                    and summary_quality_score is None
+                )
+            ):
                 results.append(None)
                 continue
             checked_reason = validated_text_field(
@@ -3572,8 +3638,11 @@ class ContentDiscoveryEngine:
 
             content.relevance_score = score
             content.quality_score = quality_score
+            content.summary_quality_score = summary_quality_score
             content.evaluation_contract_version = (
-                EVALUATION_CONTRACT_VERSION if quality_score is not None else ""
+                EVALUATION_CONTRACT_VERSION
+                if quality_score is not None and summary_quality_score is not None
+                else ""
             )
             content.relevance_reason = reason
             content.topic_group = topic_group

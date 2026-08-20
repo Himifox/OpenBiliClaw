@@ -16,6 +16,9 @@
   与 OBC 诊断拆分不得相加。lazy 宿主不运行后台 expression worker。
 - **模型路由参与精确缓存** — `LLMService.cache_route_namespace()`只提供无凭据路由身份，
   最终仅以 SHA-256 key 摘要落库；宿主管理模型切换后下一次评估自动失效旧缓存。
+- **摘要可靠度不增加调用** — Discovery 的同一条单条/批量评估响应同时返回
+  `summary_quality_score`；它只判断 prompt 可见 description/body 是否足以可靠概括内容，
+  不生成推荐文案，也不会为摘要另发一次模型请求。
 - **Provider 抽象** — `LLMProvider` ABC 定义统一接口
 - **Registry 管理** — 以实例 ID 注册端点；同一种 adapter 可出现多次，并按配置的任意长度实例链依次调用
 - **Service 门面** — `LLMService` 封装 prompt 组装 + 调用 + 校验

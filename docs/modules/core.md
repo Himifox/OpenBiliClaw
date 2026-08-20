@@ -74,6 +74,8 @@ profile, recommendation, and dialogue services stay inside Core.
    write presentation history, or consume a candidate. The optional last three
    user messages are used in memory only for deterministic sensitive-topic
    matching and are not persisted or sent to a model.
+   Candidates require current `content-eval-v8` quality, relevance, and independent
+   summary-quality components; a non-empty but weak summary still fails closed.
 4. Let NEKO's existing Phase 1 choose a candidate and Phase 2 generate the only
    user-visible character line. Do not call `core.chat()` from NEKO's normal or
    proactive conversation path.

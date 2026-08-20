@@ -15,7 +15,7 @@ trusted LAN → HTTPS（可选）→ TLS Proxy → FastAPI adapter ────�
                                                             └→ refresh / account-sync / auto-update task ownership
 
 NEKO model owner → host-managed LLMProvider ─→ OpenBiliClaw profile/evaluation
-OpenBiliClaw canonical pool ─→ aggregate signals + sensitive gate ─→ 3-layer candidate
+OpenBiliClaw canonical pool ─→ quality + relevance + summary-quality gate ─→ aggregate signals + sensitive gate ─→ 3-layer candidate
                            ─→ Core ranks max 3 ─→ adapter takes rank 1
                            ─→ NEKO Phase 1 (max 1 OBC slot; timing only)
                            ─→ selected one ─→ NEKO Phase 2 (4 fields; only visible voice)
@@ -34,6 +34,8 @@ Embedded NEKO selects `surface_copy_mode="lazy"`: no expression-copy coordinator
 is created and `recommendation.write_expression` stays at zero. Standalone FastAPI,
 Web and CLI retain the default background copy-ready flow. Semantic-ready reads are
 separate SQL paths and never weaken public copy-ready availability.
+The `content-eval-v8` response scores summary reliability in the existing evaluation
+call; all three components must be finite and at least 0.75 for proactive handoff.
                 parked when canonical available = 0
 
 guided init: signals → preferences → full profile commit
