@@ -2305,8 +2305,11 @@ class SchedulerConfigOut(BaseModel):
 
 class SoulConfigOut(BaseModel):
     preference_prompt_view: Literal["legacy", "compact-v1"] = "legacy"
-    awareness_prompt_view: Literal["legacy", "compact-v1"] = "compact-v1"
+    awareness_prompt_view: Literal["legacy", "compact-v1", "bounded-v2"] = "compact-v1"
     insight_prompt_view: Literal["legacy", "compact-v1"] = "legacy"
+    awareness_target_input_tokens: int = 24_000
+    awareness_hard_input_tokens: int = 32_000
+    awareness_max_calls_per_cycle: int = 2
     posture_gate_mode: Literal["shadow", "enforce", "off"] = "shadow"
     posture_gate_force_enforce: bool = False
     topic_lifecycle_serialization: Literal["off", "on"] = "off"

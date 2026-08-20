@@ -21,6 +21,7 @@ from openbiliclaw.soul.awareness_analyzer import AwarenessAnalyzer
 from openbiliclaw.soul.event_prompt_views import (
     MALFORMED_METADATA_MAX_CHARS,
     build_cognition_event_view_v1,
+    normalize_awareness_input_view,
     normalize_cognition_input_view,
 )
 from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
@@ -439,6 +440,12 @@ def test_compact_prompt_blocks_are_stable_to_volatile_and_keep_retraction_marker
 )
 def test_normalize_cognition_input_view(value: str, expected: str) -> None:
     assert normalize_cognition_input_view(value) == expected
+
+
+def test_bounded_view_is_awareness_only() -> None:
+    assert normalize_awareness_input_view(" bounded-v2 ") == "bounded-v2"
+    with pytest.raises(ValueError, match="compact-v1"):
+        normalize_cognition_input_view("bounded-v2")
 
 
 def test_cognition_prompt_builders_reject_unknown_view() -> None:

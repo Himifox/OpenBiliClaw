@@ -1984,14 +1984,20 @@ def test_soul_engine_threads_task_scoped_prompt_views_to_each_analyzer(tmp_path:
         llm=FakeRegistry("{}"),
         memory=memory,
         preference_prompt_view="compact-v1",
-        awareness_prompt_view="legacy",
+        awareness_prompt_view="bounded-v2",
         insight_prompt_view="compact-v1",
+        awareness_target_input_tokens=20000,
+        awareness_hard_input_tokens=30000,
+        awareness_max_calls_per_cycle=3,
     )
     assert split_engine._preference_prompt_view == "compact-v1"
-    assert split_engine._awareness_prompt_view == "legacy"
+    assert split_engine._awareness_prompt_view == "bounded-v2"
     assert split_engine._insight_prompt_view == "compact-v1"
     assert split_engine._awareness_analyzer.plain_prompt_view == "legacy"
-    assert split_engine._awareness_analyzer.confusions_prompt_view == "legacy"
+    assert split_engine._awareness_analyzer.confusions_prompt_view == "bounded-v2"
+    assert split_engine._awareness_analyzer.target_input_tokens == 20000
+    assert split_engine._awareness_analyzer.hard_input_tokens == 30000
+    assert split_engine._cognition_cycle._max_awareness_calls_per_cycle == 3
     assert split_engine._insight_analyzer.cognition_prompt_view == "compact-v1"
     assert split_engine._preference_analyzer.cognition_prompt_view == "compact-v1"
 

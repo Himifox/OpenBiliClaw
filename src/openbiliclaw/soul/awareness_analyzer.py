@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
@@ -15,14 +15,22 @@ from openbiliclaw.llm.json_utils import (
     parse_llm_json_tolerant,
 )
 from openbiliclaw.llm.prompts import (
+    BoundedAwarenessPrompt,
     build_awareness_prompt,
     build_awareness_with_confusions_prompt,
+    build_bounded_awareness_with_confusions_prompt,
 )
 from openbiliclaw.llm.service import LLMServiceError
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
-from openbiliclaw.soul.event_prompt_views import normalize_cognition_input_view
+from openbiliclaw.soul.event_prompt_views import (
+    normalize_awareness_input_view,
+    normalize_cognition_input_view,
+)
 
 from .profile import AwarenessNote
+
+if TYPE_CHECKING:
+    from openbiliclaw.soul.activity_envelope import ActivityEnvelopeManifest
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +83,73 @@ class AwarenessAnalyzer:
     registry: SupportsCoreMemoryTask
     plain_prompt_view: str = "legacy"
     confusions_prompt_view: str = "legacy"
+    target_input_tokens: int = 24_000
+    hard_input_tokens: int = 32_000
 
     def __post_init__(self) -> None:
         if not hasattr(self.registry, "complete_structured_task"):
             raise TypeError("AwarenessAnalyzer requires a service with complete_structured_task().")
         self.plain_prompt_view = normalize_cognition_input_view(self.plain_prompt_view)
-        self.confusions_prompt_view = normalize_cognition_input_view(self.confusions_prompt_view)
+        self.confusions_prompt_view = normalize_awareness_input_view(self.confusions_prompt_view)
+        self.target_input_tokens = max(4_000, int(self.target_input_tokens))
+        self.hard_input_tokens = max(self.target_input_tokens, int(self.hard_input_tokens))
+
+    @property
+    def bounded_mode(self) -> bool:
+        return self.confusions_prompt_view == "bounded-v2"
+
+    def select_bounded_event_prefix(
+        self,
+        *,
+        events: list[dict[str, object]],
+        preference: dict[str, object],
+        soul_profile: dict[str, object],
+    ) -> list[dict[str, object]]:
+        """Return the largest whole-envelope prefix under the input budget."""
+
+        if not self.bounded_mode:
+            return list(events)
+        prompt = self._build_bounded_prompt(
+            events=events,
+            preference=preference,
+            soul_profile=soul_profile,
+        )
+        return [dict(event) for event in prompt.consumed_events]
+
+    def bounded_manifest_digest(
+        self,
+        *,
+        events: list[dict[str, object]],
+        preference: dict[str, object],
+        soul_profile: dict[str, object],
+    ) -> str:
+        if not self.bounded_mode:
+            return ""
+        return self._build_bounded_prompt(
+            events=events,
+            preference=preference,
+            soul_profile=soul_profile,
+        ).manifest.digest()
+
+    def _build_bounded_prompt(
+        self,
+        *,
+        events: list[dict[str, object]],
+        preference: dict[str, object],
+        soul_profile: dict[str, object],
+    ) -> BoundedAwarenessPrompt:
+        prompt = build_bounded_awareness_with_confusions_prompt(
+            events=events,
+            preference_summary=preference,
+            soul_profile=soul_profile,
+            target_input_tokens=min(self.target_input_tokens, self.hard_input_tokens),
+        )
+        if prompt.estimated_input_tokens > self.hard_input_tokens:
+            raise AwarenessGenerationError(
+                "bounded awareness prompt exceeds hard input budget "
+                f"({prompt.estimated_input_tokens}>{self.hard_input_tokens})"
+            )
+        return prompt
 
     async def analyze(
         self,
@@ -154,12 +223,30 @@ class AwarenessAnalyzer:
         ``analyze()`` (same ``_build_note`` + evidence attribution), and
         confusion candidates are whitelist-validated dicts (bad rows dropped).
         """
-        messages = build_awareness_with_confusions_prompt(
-            events=events,
-            preference_summary=preference,
-            soul_profile=soul_profile,
-            input_view=self.confusions_prompt_view,
-        )
+        bounded_prompt: BoundedAwarenessPrompt | None = None
+        if self.bounded_mode:
+            bounded_prompt = self._build_bounded_prompt(
+                events=events,
+                preference=preference,
+                soul_profile=soul_profile,
+            )
+            messages = bounded_prompt.messages
+            logger.info(
+                "bounded awareness prompt: estimated_tokens=%d sections=%s "
+                "events=%d envelopes=%d manifest=%s",
+                bounded_prompt.estimated_input_tokens,
+                bounded_prompt.section_estimated_tokens,
+                len(bounded_prompt.consumed_events),
+                len(bounded_prompt.manifest.envelopes),
+                bounded_prompt.manifest.digest(),
+            )
+        else:
+            messages = build_awareness_with_confusions_prompt(
+                events=events,
+                preference_summary=preference,
+                soul_profile=soul_profile,
+                input_view=self.confusions_prompt_view,
+            )
         try:
             complete_structured = self.registry.complete_structured_task
             response = await complete_structured(
@@ -172,6 +259,13 @@ class AwarenessAnalyzer:
         except (LLMProviderError, LLMServiceError) as exc:
             raise AwarenessGenerationError(str(exc)) from exc
         notes_payload, confusions_payload = self._parse_with_confusions(response.content)
+        if bounded_prompt is not None:
+            notes = self._build_bounded_notes(notes_payload, bounded_prompt.manifest)
+            confusions = self._map_bounded_confusions(
+                confusions_payload,
+                bounded_prompt.manifest,
+            )
+            return notes, confusions
         evidence_ids = (
             list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
         )
@@ -179,6 +273,75 @@ class AwarenessAnalyzer:
             self._build_note(item, evidence_ids) for item in notes_payload if isinstance(item, dict)
         ]
         return notes, confusions_payload
+
+    @staticmethod
+    def _source_refs(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        refs: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            ref = str(item or "").strip().upper()
+            if ref and ref not in seen:
+                refs.append(ref)
+                seen.add(ref)
+        return refs
+
+    def _build_bounded_notes(
+        self,
+        payload: list[object],
+        manifest: ActivityEnvelopeManifest,
+    ) -> list[AwarenessNote]:
+        notes: list[AwarenessNote] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            refs = self._source_refs(item.get("source_refs"))
+            event_ids = manifest.event_ids_for_refs(refs)
+            observation = str(item.get("observation", "") or "").strip()
+            if not observation or event_ids is None:
+                logger.warning(
+                    "bounded awareness note dropped: invalid source_refs=%s",
+                    refs,
+                )
+                continue
+            notes.append(
+                AwarenessNote(
+                    date=str(item.get("date", "") or "").strip(),
+                    observation=observation,
+                    trend=str(item.get("trend", "") or "").strip(),
+                    emotion_guess=str(item.get("emotion_guess", "") or "").strip(),
+                    note_id=uuid4().hex[:12],
+                    source_event_ids=event_ids,
+                    source_event_ids_approximate=False,
+                )
+            )
+        if payload and not notes:
+            raise AwarenessGenerationError(
+                "bounded awareness response contained no valid envelope references"
+            )
+        return notes
+
+    def _map_bounded_confusions(
+        self,
+        payload: list[dict[str, object]],
+        manifest: ActivityEnvelopeManifest,
+    ) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
+        for item in payload:
+            refs = self._source_refs(item.get("source_refs"))
+            event_ids = manifest.event_ids_for_refs(refs)
+            if event_ids is None:
+                logger.warning(
+                    "bounded confusion dropped: invalid source_refs=%s",
+                    refs,
+                )
+                continue
+            mapped = dict(item)
+            mapped.pop("source_refs", None)
+            mapped["evidence_refs"] = [str(event_id) for event_id in event_ids]
+            result.append(mapped)
+        return result
 
     def _parse_with_confusions(
         self,
@@ -229,17 +392,23 @@ class AwarenessAnalyzer:
                 for ref in (item.get("evidence_refs") or [])
                 if isinstance(item.get("evidence_refs"), list) and str(ref).strip()
             ]
-            result.append(
-                {
-                    "topic": str(item.get("topic", "")).strip(),
-                    "observation": observation,
-                    "interpretation": str(item.get("interpretation", "")).strip(),
-                    "interpretation_confidence": _clamp_unit(
-                        item.get("interpretation_confidence", 0.0)
-                    ),
-                    "evidence_refs": evidence,
-                }
-            )
+            source_refs = [
+                str(ref).strip()
+                for ref in (item.get("source_refs") or [])
+                if isinstance(item.get("source_refs"), list) and str(ref).strip()
+            ]
+            validated: dict[str, object] = {
+                "topic": str(item.get("topic", "")).strip(),
+                "observation": observation,
+                "interpretation": str(item.get("interpretation", "")).strip(),
+                "interpretation_confidence": _clamp_unit(
+                    item.get("interpretation_confidence", 0.0)
+                ),
+                "evidence_refs": evidence,
+            }
+            if source_refs:
+                validated["source_refs"] = source_refs
+            result.append(validated)
         return result
 
     def merge_notes(

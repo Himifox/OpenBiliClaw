@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 CognitionInputView = Literal["legacy", "compact-v1"]
+AwarenessInputView = Literal["legacy", "compact-v1", "bounded-v2"]
 
 _COGNITION_INPUT_VIEWS = frozenset({"legacy", "compact-v1"})
+_AWARENESS_INPUT_VIEWS = frozenset({*_COGNITION_INPUT_VIEWS, "bounded-v2"})
 
 # This is deliberately an exact-key denylist.  Unknown metadata is evidence,
 # not garbage, and therefore survives unless a field is known to be internal
@@ -87,6 +89,16 @@ def normalize_cognition_input_view(value: str) -> CognitionInputView:
         allowed = ", ".join(sorted(_COGNITION_INPUT_VIEWS))
         raise ValueError(f"cognition prompt view must be one of: {allowed}")
     return cast("CognitionInputView", normalized)
+
+
+def normalize_awareness_input_view(value: str) -> AwarenessInputView:
+    """Validate the awareness-only prompt view, including bounded-v2."""
+
+    normalized = str(value or "legacy").strip().lower()
+    if normalized not in _AWARENESS_INPUT_VIEWS:
+        allowed = ", ".join(sorted(_AWARENESS_INPUT_VIEWS))
+        raise ValueError(f"awareness prompt view must be one of: {allowed}")
+    return cast("AwarenessInputView", normalized)
 
 
 def _is_empty(value: object) -> bool:

@@ -16882,6 +16882,9 @@ def create_app(
                 preference_prompt_view=cfg.soul.preference_prompt_view,
                 awareness_prompt_view=cfg.soul.awareness_prompt_view,
                 insight_prompt_view=cfg.soul.insight_prompt_view,
+                awareness_target_input_tokens=cfg.soul.awareness_target_input_tokens,
+                awareness_hard_input_tokens=cfg.soul.awareness_hard_input_tokens,
+                awareness_max_calls_per_cycle=cfg.soul.awareness_max_calls_per_cycle,
                 posture_gate_mode=cfg.soul.posture_gate_mode,
                 posture_gate_force_enforce=cfg.soul.posture_gate_force_enforce,
                 topic_lifecycle_serialization=cfg.soul.topic_lifecycle_serialization,
@@ -19368,6 +19371,13 @@ def create_app(
                         prompt_view_field,
                         str(sdata[prompt_view_field]).strip().lower(),
                     )
+            for bounded_field in (
+                "awareness_target_input_tokens",
+                "awareness_hard_input_tokens",
+                "awareness_max_calls_per_cycle",
+            ):
+                if bounded_field in sdata:
+                    setattr(cfg.soul, bounded_field, int(sdata[bounded_field]))
             if "posture_gate_mode" in sdata:
                 cfg.soul.posture_gate_mode = str(sdata["posture_gate_mode"]).strip().lower()
             if "posture_gate_force_enforce" in sdata:

@@ -977,8 +977,11 @@ def test_build_openclaw_adapter_services_forwards_soul_engine_config_and_databas
     cfg.scheduler.unified_interest_line = True
     cfg.soul.preference.satisfaction_filter_enabled = False
     cfg.soul.preference_prompt_view = "compact-v1"
-    cfg.soul.awareness_prompt_view = "legacy"
+    cfg.soul.awareness_prompt_view = "bounded-v2"
     cfg.soul.insight_prompt_view = "compact-v1"
+    cfg.soul.awareness_target_input_tokens = 20000
+    cfg.soul.awareness_hard_input_tokens = 30000
+    cfg.soul.awareness_max_calls_per_cycle = 3
 
     captured: dict[str, object] = {}
 
@@ -1018,8 +1021,11 @@ def test_build_openclaw_adapter_services_forwards_soul_engine_config_and_databas
     assert captured["unified_interest_line"] is True
     assert captured["satisfaction_filter_enabled"] is False
     assert captured["preference_prompt_view"] == "compact-v1"
-    assert captured["awareness_prompt_view"] == "legacy"
+    assert captured["awareness_prompt_view"] == "bounded-v2"
     assert captured["insight_prompt_view"] == "compact-v1"
+    assert captured["awareness_target_input_tokens"] == 20000
+    assert captured["awareness_hard_input_tokens"] == 30000
+    assert captured["awareness_max_calls_per_cycle"] == 3
     memory = captured["memory"]
     assert captured["database"] is memory.database
 

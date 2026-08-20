@@ -519,6 +519,55 @@ async def test_awareness_partial_progress_survives_midbatch_failure(tmp_path: Pa
     assert not state.get("last_awareness_at")
 
 
+class _BoundedRecordingAwarenessAnalyzer(_RecordingAwarenessAnalyzer):
+    bounded_mode = True
+
+    def select_bounded_event_prefix(
+        self,
+        *,
+        events: list[dict[str, object]],
+        preference: dict[str, object],
+        soul_profile: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return list(events)
+
+    def bounded_manifest_digest(
+        self,
+        *,
+        events: list[dict[str, object]],
+        preference: dict[str, object],
+        soul_profile: dict[str, object],
+    ) -> str:
+        return ",".join(str(event["id"]) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_bounded_awareness_stops_after_call_budget_without_skipping_rows(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.soul.cognition_cycle import _AWARENESS_EVENT_BATCH_SIZE
+
+    batch = _AWARENESS_EVENT_BATCH_SIZE
+    memory = _seed_memory(tmp_path, event_count=0)
+    _add_events(memory, batch * 2 + 15)
+    rec = _BoundedRecordingAwarenessAnalyzer()
+    cycle = CognitionCycle(
+        memory=memory,
+        awareness_analyzer=rec,  # type: ignore[arg-type]
+        insight_analyzer=_NoopInsightAnalyzer(),  # type: ignore[arg-type]
+        min_interval_seconds=60,
+        max_awareness_calls_per_cycle=2,
+    )
+
+    await cycle.run_if_due(now=datetime(2026, 6, 15, 12, 0, 0))
+
+    assert len(rec.calls) == 2
+    assert cycle._load_state()["last_awareness_event_id"] == batch * 2  # noqa: SLF001
+    assert "pending_awareness_batch" not in cycle._load_state()  # noqa: SLF001
+    seen = set().union(*(_event_ids(call) for call in rec.calls))
+    assert seen == set(range(1, batch * 2 + 1))
+
+
 def _set_awareness_notes(memory: MemoryManager, count: int) -> None:
     notes = [
         {"date": "2026-06-15", "observation": f"觉察{i}", "trend": "", "emotion_guess": ""}

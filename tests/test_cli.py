@@ -2190,8 +2190,11 @@ def test_runtime_builders_share_database_instance(
         soul=SimpleNamespace(
             preference=SimpleNamespace(satisfaction_filter_enabled=True),
             preference_prompt_view="compact-v1",
-            awareness_prompt_view="legacy",
+            awareness_prompt_view="bounded-v2",
             insight_prompt_view="compact-v1",
+            awareness_target_input_tokens=20000,
+            awareness_hard_input_tokens=30000,
+            awareness_max_calls_per_cycle=3,
             posture_gate_mode="shadow",
             posture_gate_force_enforce=False,
             topic_lifecycle_serialization="off",
@@ -2259,8 +2262,11 @@ def test_runtime_builders_share_database_instance(
     )
     assert soul_engine.kwargs["llm_concurrency_gate"] is recommendation_engine.llm.concurrency_gate
     assert soul_engine.kwargs["preference_prompt_view"] == "compact-v1"
-    assert soul_engine.kwargs["awareness_prompt_view"] == "legacy"
+    assert soul_engine.kwargs["awareness_prompt_view"] == "bounded-v2"
     assert soul_engine.kwargs["insight_prompt_view"] == "compact-v1"
+    assert soul_engine.kwargs["awareness_target_input_tokens"] == 20000
+    assert soul_engine.kwargs["awareness_hard_input_tokens"] == 30000
+    assert soul_engine.kwargs["awareness_max_calls_per_cycle"] == 3
     assert discovery_engine.concurrency.llm_evaluation_concurrency == 2
 
 

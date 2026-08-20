@@ -858,6 +858,15 @@ class RuntimeContext:
             preference_prompt_view=str(getattr(soul_cfg, "preference_prompt_view", "legacy")),
             awareness_prompt_view=str(getattr(soul_cfg, "awareness_prompt_view", "compact-v1")),
             insight_prompt_view=str(getattr(soul_cfg, "insight_prompt_view", "legacy")),
+            awareness_target_input_tokens=int(
+                getattr(soul_cfg, "awareness_target_input_tokens", 24_000)
+            ),
+            awareness_hard_input_tokens=int(
+                getattr(soul_cfg, "awareness_hard_input_tokens", 32_000)
+            ),
+            awareness_max_calls_per_cycle=int(
+                getattr(soul_cfg, "awareness_max_calls_per_cycle", 2)
+            ),
             posture_gate_mode=str(getattr(soul_cfg, "posture_gate_mode", "shadow")),
             posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
             module_overrides=new_module_overrides,
@@ -1574,9 +1583,11 @@ class RuntimeContext:
             supply_callback=_request_candidate_supply,
             post_commit_callback=_precompute_committed_candidates,
             on_admitted=(
-                lambda count: expression_coordinator.notify(f"candidate_admitted:{count}")
-                if expression_coordinator is not None
-                else None
+                lambda count: (
+                    expression_coordinator.notify(f"candidate_admitted:{count}")
+                    if expression_coordinator is not None
+                    else None
+                )
             ),
             work_allowed=lambda: (
                 new_runtime_controller._is_initialized()  # noqa: SLF001

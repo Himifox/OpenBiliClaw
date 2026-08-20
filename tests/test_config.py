@@ -442,6 +442,9 @@ manage_ollama = true
         cfg.soul.preference_prompt_view = "compact-v1"
         cfg.soul.awareness_prompt_view = "legacy"
         cfg.soul.insight_prompt_view = "compact-v1"
+        cfg.soul.awareness_target_input_tokens = 20000
+        cfg.soul.awareness_hard_input_tokens = 30000
+        cfg.soul.awareness_max_calls_per_cycle = 3
         target = tmp_path / "config.toml"
 
         save_config(cfg, target)
@@ -452,11 +455,32 @@ manage_ollama = true
         assert 'preference_prompt_view = "compact-v1"' in rendered
         assert 'awareness_prompt_view = "legacy"' in rendered
         assert 'insight_prompt_view = "compact-v1"' in rendered
+        assert "awareness_target_input_tokens = 20000" in rendered
+        assert "awareness_hard_input_tokens = 30000" in rendered
+        assert "awareness_max_calls_per_cycle = 3" in rendered
         assert "cognition_prompt_view" not in rendered
         assert loaded.scheduler.copy_ready_target_count == 47
         assert loaded.soul.preference_prompt_view == "compact-v1"
         assert loaded.soul.awareness_prompt_view == "legacy"
         assert loaded.soul.insight_prompt_view == "compact-v1"
+        assert loaded.soul.awareness_target_input_tokens == 20000
+        assert loaded.soul.awareness_hard_input_tokens == 30000
+        assert loaded.soul.awareness_max_calls_per_cycle == 3
+
+    def test_bounded_awareness_view_and_budget_validate(self) -> None:
+        from openbiliclaw.config import _collect_config_issues
+
+        cfg = Config()
+        cfg.soul.awareness_prompt_view = "bounded-v2"
+        assert "soul.awareness_prompt_view" not in {
+            issue.field for issue in _collect_config_issues(cfg)
+        }
+
+        cfg.soul.awareness_target_input_tokens = 32001
+        cfg.soul.awareness_hard_input_tokens = 32000
+        assert "soul.awareness_target_input_tokens" in {
+            issue.field for issue in _collect_config_issues(cfg)
+        }
 
     def test_token_diet_runtime_control_defaults_only_enable_awareness(self) -> None:
         cfg = Config()

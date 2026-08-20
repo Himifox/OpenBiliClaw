@@ -15491,8 +15491,11 @@ class TestEmbeddingAndCompatProviderE2E:
             json={
                 "soul": {
                     "preference_prompt_view": "compact-v1",
-                    "awareness_prompt_view": "legacy",
+                    "awareness_prompt_view": "bounded-v2",
                     "insight_prompt_view": "compact-v1",
+                    "awareness_target_input_tokens": 20000,
+                    "awareness_hard_input_tokens": 30000,
+                    "awareness_max_calls_per_cycle": 3,
                 }
             },
         )
@@ -15502,15 +15505,24 @@ class TestEmbeddingAndCompatProviderE2E:
         assert initial_soul["preference_prompt_view"] == "legacy"
         assert initial_soul["awareness_prompt_view"] == "compact-v1"
         assert initial_soul["insight_prompt_view"] == "legacy"
+        assert initial_soul["awareness_target_input_tokens"] == 24000
+        assert initial_soul["awareness_hard_input_tokens"] == 32000
+        assert initial_soul["awareness_max_calls_per_cycle"] == 2
         assert "cognition_prompt_view" not in initial_soul
         assert updated.status_code == 202
         updated_soul = updated.json()["config"]["soul"]
         assert updated_soul["preference_prompt_view"] == "compact-v1"
-        assert updated_soul["awareness_prompt_view"] == "legacy"
+        assert updated_soul["awareness_prompt_view"] == "bounded-v2"
         assert updated_soul["insight_prompt_view"] == "compact-v1"
+        assert updated_soul["awareness_target_input_tokens"] == 20000
+        assert updated_soul["awareness_hard_input_tokens"] == 30000
+        assert updated_soul["awareness_max_calls_per_cycle"] == 3
         assert cfg.soul.preference_prompt_view == "compact-v1"
-        assert cfg.soul.awareness_prompt_view == "legacy"
+        assert cfg.soul.awareness_prompt_view == "bounded-v2"
         assert cfg.soul.insight_prompt_view == "compact-v1"
+        assert cfg.soul.awareness_target_input_tokens == 20000
+        assert cfg.soul.awareness_hard_input_tokens == 30000
+        assert cfg.soul.awareness_max_calls_per_cycle == 3
         rendered = (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert "cognition_prompt_view" not in rendered
 

@@ -1497,6 +1497,7 @@ POSTURE_GATE_ENFORCE_MIN_RECENT_COUNT = 1
 _POSTURE_GATE_MODES = frozenset({"shadow", "enforce", "off"})
 _TOPIC_LIFECYCLE_SERIALIZATION_MODES = frozenset({"off", "on"})
 _COGNITION_PROMPT_VIEW_MODES = frozenset({"legacy", "compact-v1"})
+_AWARENESS_PROMPT_VIEW_MODES = frozenset({*_COGNITION_PROMPT_VIEW_MODES, "bounded-v2"})
 
 
 @dataclass
@@ -1519,6 +1520,13 @@ class SoulConfig:
     preference_prompt_view: str = "legacy"
     awareness_prompt_view: str = "compact-v1"
     insight_prompt_view: str = "legacy"
+    # Awareness input calibration starts from the 2026-08-20 qwen3.7-plus
+    # incident (127,198 prompt tokens for 28 new events). ``bounded-v2`` uses a
+    # tokenizer-independent UTF-8 byte upper bound, targeting 24k and refusing
+    # any request above 32k. Recalibrate after a provider/model swap.
+    awareness_target_input_tokens: int = 24_000
+    awareness_hard_input_tokens: int = 32_000
+    awareness_max_calls_per_cycle: int = 2
     posture_gate_mode: str = "shadow"
     posture_gate_force_enforce: bool = False
     # Topic-lifecycle serialization (spec §Phase 4). ``off`` (default) keeps the
@@ -2360,6 +2368,24 @@ def _build_config(
         preference_prompt_view=raw_preference_prompt_view,
         awareness_prompt_view=raw_awareness_prompt_view,
         insight_prompt_view=raw_insight_prompt_view,
+        awareness_target_input_tokens=_normalize_scheduler_int(
+            soul_raw.get("awareness_target_input_tokens", 24_000),
+            default=24_000,
+            min_value=4_000,
+            max_value=32_000,
+        ),
+        awareness_hard_input_tokens=_normalize_scheduler_int(
+            soul_raw.get("awareness_hard_input_tokens", 32_000),
+            default=32_000,
+            min_value=4_000,
+            max_value=64_000,
+        ),
+        awareness_max_calls_per_cycle=_normalize_scheduler_int(
+            soul_raw.get("awareness_max_calls_per_cycle", 2),
+            default=2,
+            min_value=1,
+            max_value=10,
+        ),
         posture_gate_mode=raw_gate_mode if raw_gate_mode in _POSTURE_GATE_MODES else "shadow",
         posture_gate_force_enforce=bool(soul_raw.get("posture_gate_force_enforce", False)),
         topic_lifecycle_serialization=(
@@ -3907,22 +3933,41 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
-    for field_name in (
-        "preference_prompt_view",
-        "awareness_prompt_view",
-        "insight_prompt_view",
-    ):
+    for field_name in ("preference_prompt_view", "insight_prompt_view"):
         raw_prompt_view = getattr(config.soul, field_name)
         if str(raw_prompt_view or "").strip().lower() not in _COGNITION_PROMPT_VIEW_MODES:
             issues.append(
                 ConfigIssue(
                     field=f"soul.{field_name}",
                     message=(
-                        f"不支持的 {field_name}: `{raw_prompt_view}`。仅支持: legacy, compact-v1。"
+                        f"不支持的 {field_name}: `{raw_prompt_view}`。"
+                        "仅支持: legacy, compact-v1。"
                     ),
                     severity="blocking",
                 )
             )
+
+    raw_awareness_prompt_view = str(config.soul.awareness_prompt_view or "").strip().lower()
+    if raw_awareness_prompt_view not in _AWARENESS_PROMPT_VIEW_MODES:
+        issues.append(
+            ConfigIssue(
+                field="soul.awareness_prompt_view",
+                message=(
+                    f"不支持的 awareness_prompt_view: `{raw_awareness_prompt_view}`。"
+                    "仅支持: legacy, compact-v1, bounded-v2。"
+                ),
+                severity="blocking",
+            )
+        )
+
+    if config.soul.awareness_target_input_tokens > config.soul.awareness_hard_input_tokens:
+        issues.append(
+            ConfigIssue(
+                field="soul.awareness_target_input_tokens",
+                message="awareness_target_input_tokens 不能大于 awareness_hard_input_tokens。",
+                severity="blocking",
+            )
+        )
 
     if (
         str(config.soul.topic_lifecycle_serialization or "").strip().lower()
@@ -5372,6 +5417,10 @@ def _render_config_toml(
             f"preference_prompt_view = {_toml_string(config.soul.preference_prompt_view)}",
             f"awareness_prompt_view = {_toml_string(config.soul.awareness_prompt_view)}",
             f"insight_prompt_view = {_toml_string(config.soul.insight_prompt_view)}",
+            "# bounded-v2 input guard; recalibrate after a provider/model swap.",
+            f"awareness_target_input_tokens = {config.soul.awareness_target_input_tokens}",
+            f"awareness_hard_input_tokens = {config.soul.awareness_hard_input_tokens}",
+            f"awareness_max_calls_per_cycle = {config.soul.awareness_max_calls_per_cycle}",
             "# Deep-write consistency gate (spec Phase 3). shadow = async",
             "# side-channel judging without blocking writes (default);",
             "# enforce = synchronous gate (savable only after >=14 days of",

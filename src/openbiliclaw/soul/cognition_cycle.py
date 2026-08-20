@@ -216,6 +216,7 @@ class CognitionCycle:
         awareness_analyzer: AwarenessAnalyzer,
         insight_analyzer: InsightAnalyzer,
         min_interval_seconds: int = DEFAULT_MIN_INTERVAL_SECONDS,
+        max_awareness_calls_per_cycle: int = 2,
         pending_rebuild_hook: Callable[[], Awaitable[Any]] | None = None,
         confusion_replay_hook: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
@@ -223,6 +224,7 @@ class CognitionCycle:
         self._awareness_analyzer = awareness_analyzer
         self._insight_analyzer = insight_analyzer
         self._min_interval_seconds = int(min_interval_seconds)
+        self._max_awareness_calls_per_cycle = max(1, int(max_awareness_calls_per_cycle))
         # 12h-loop fallback trigger for the SoulEngine's debounced confirmed-
         # hypotheses rebuild (spec invariant 4). Optional; best-effort.
         self._pending_rebuild_hook = pending_rebuild_hook
@@ -399,12 +401,12 @@ class CognitionCycle:
     async def _run_awareness(self, state: dict[str, Any]) -> int:
         """Fold events newer than the watermark into awareness notes.
 
-        Cursor-based: reads events with ``id > last_awareness_event_id`` (the
-        newest ``_AWARENESS_BACKLOG_CAP`` of them on a large backlog), processes
-        them in ``_AWARENESS_EVENT_BATCH_SIZE`` chunks, and advances the
+        Cursor-based: reads the oldest continuous rows with
+        ``id > last_awareness_event_id``, processes them in bounded chunks, and advances the
         watermark after each successful chunk so partial progress survives a
-        later-chunk failure. A small lookback of already-processed events rides
-        in the first chunk so observations stay trend-aware when little is new.
+        later-chunk failure. ``bounded-v2`` selects only whole activity-envelope
+        prefixes and limits paid calls per cycle; remaining rows stay behind the
+        watermark and trigger a later pass.
 
         Each chunk's analyze call retries once on ``AwarenessGenerationError``
         (mirrors the legacy single-call behavior). A persistent failure bubbles
@@ -414,7 +416,7 @@ class CognitionCycle:
         Returns the number of NEW notes added across all chunks.
         """
         watermark = _coerce_int(state.get("last_awareness_event_id", 0))
-        rows = self._memory.query_events(
+        rows = self._memory.query_event_rows_after(
             after_event_id=watermark,
             limit=_AWARENESS_BACKLOG_CAP,
         )
@@ -422,23 +424,69 @@ class CognitionCycle:
             return 0
         if len(rows) >= _AWARENESS_BACKLOG_CAP:
             logger.warning(
-                "Awareness backlog hit cap %d; older unprocessed events are "
-                "skipped (watermark jumps to newest of this window).",
+                "Awareness backlog hit cap %d; remaining newer events will stay "
+                "behind the durable watermark for a later pass.",
                 _AWARENESS_BACKLOG_CAP,
             )
-        rows.reverse()  # query returns newest-first; process chronologically
 
-        lookback = self._awareness_lookback(watermark)
+        bounded_mode = bool(getattr(self._awareness_analyzer, "bounded_mode", False))
+        lookback = [] if bounded_mode else self._awareness_lookback(watermark)
         preference = self._memory.get_layer("preference").data
         soul_profile_data = self._memory.get_layer("soul").data
 
         total_added = 0
-        for batch_index, batch in enumerate(_chunk(rows, _AWARENESS_EVENT_BATCH_SIZE)):
-            events_for_call = (lookback + batch) if batch_index == 0 else batch
+        call_count = 0
+        pending = list(rows)
+        first_batch = True
+        while pending:
+            batch = pending[:_AWARENESS_EVENT_BATCH_SIZE]
+            if bounded_mode:
+                selector = getattr(self._awareness_analyzer, "select_bounded_event_prefix", None)
+                if not callable(selector):
+                    raise AwarenessGenerationError(
+                        "bounded awareness analyzer does not expose envelope selection"
+                    )
+                selected = selector(
+                    events=batch,
+                    preference=preference,
+                    soul_profile=soul_profile_data,
+                )
+                if not selected:
+                    raise AwarenessGenerationError("bounded awareness selected no events")
+                batch = selected
+                events_for_call = batch
+            else:
+                events_for_call = (lookback + batch) if first_batch else batch
             # Evidence chain: attribute produced notes to THIS round's consumed
             # events (the batch), not the read-only lookback context.
             batch_event_ids = [_coerce_int(item.get("id", 0)) for item in batch]
             batch_event_ids = [eid for eid in batch_event_ids if eid > 0]
+            if bounded_mode:
+                digest_fn = getattr(self._awareness_analyzer, "bounded_manifest_digest", None)
+                manifest_digest = (
+                    str(
+                        digest_fn(
+                            events=batch,
+                            preference=preference,
+                            soul_profile=soul_profile_data,
+                        )
+                    )
+                    if callable(digest_fn)
+                    else ""
+                )
+                pending_marker = {
+                    "contract_version": "awareness-envelope-v1",
+                    "after_event_id": watermark,
+                    "through_event_id": max(batch_event_ids),
+                    "manifest_digest": manifest_digest,
+                }
+                previous_marker = state.get("pending_awareness_batch")
+                if isinstance(previous_marker, dict) and previous_marker != pending_marker:
+                    raise AwarenessGenerationError(
+                        "pending awareness envelope manifest changed before retry"
+                    )
+                state["pending_awareness_batch"] = pending_marker
+                self._save_state(state)
             new_notes, confusion_candidates = await self._awareness_with_retry(
                 events_for_call, preference, soul_profile_data, batch_event_ids
             )
@@ -457,7 +505,13 @@ class CognitionCycle:
             batch_max_id = max(_coerce_int(item.get("id", 0)) for item in batch)
             watermark = max(watermark, batch_max_id)
             state["last_awareness_event_id"] = watermark
+            state.pop("pending_awareness_batch", None)
             self._save_state(state)
+            pending = pending[len(batch) :]
+            call_count += 1
+            first_batch = False
+            if bounded_mode and call_count >= self._max_awareness_calls_per_cycle:
+                break
         return total_added
 
     async def _awareness_with_retry(

@@ -56,7 +56,7 @@ from .dialogue_learn_queue import (
     DialogueJobResult,
     DialogueSettlementQueue,
 )
-from .event_prompt_views import normalize_cognition_input_view
+from .event_prompt_views import normalize_awareness_input_view, normalize_cognition_input_view
 from .identity import build_hash8_map
 from .insight_analyzer import InsightAnalyzer
 from .ledger import ProfileLedger
@@ -321,6 +321,9 @@ class SoulEngine:
         preference_prompt_view: str = "legacy",
         awareness_prompt_view: str = "compact-v1",
         insight_prompt_view: str = "legacy",
+        awareness_target_input_tokens: int = 24_000,
+        awareness_hard_input_tokens: int = 32_000,
+        awareness_max_calls_per_cycle: int = 2,
         module_overrides: Mapping[str, ModuleOverride] | None = None,
         llm_concurrency: int = 4,
         llm_concurrency_gate: Any | None = None,
@@ -352,7 +355,7 @@ class SoulEngine:
         self._memory = memory
         self._satisfaction_filter_enabled = satisfaction_filter_enabled
         self._preference_prompt_view = normalize_cognition_input_view(preference_prompt_view)
-        self._awareness_prompt_view = normalize_cognition_input_view(awareness_prompt_view)
+        self._awareness_prompt_view = normalize_awareness_input_view(awareness_prompt_view)
         self._insight_prompt_view = normalize_cognition_input_view(insight_prompt_view)
         self._feedback_batch_threshold = max(1, feedback_batch_threshold)
         # Unified interest line kill switch (spec 2026-07-27). False (Wave A
@@ -396,6 +399,8 @@ class SoulEngine:
             self._llm_service,
             plain_prompt_view="legacy",
             confusions_prompt_view=self._awareness_prompt_view,
+            target_input_tokens=awareness_target_input_tokens,
+            hard_input_tokens=awareness_hard_input_tokens,
         )
         self._dialogue_insight_analyzer = DialogueInsightAnalyzer(self._llm_service)
         self._insight_analyzer = InsightAnalyzer(
@@ -444,6 +449,7 @@ class SoulEngine:
             # rebuild (spec invariant 4). Bound method; only invoked at run time.
             pending_rebuild_hook=self.run_pending_rebuild_if_due,
             confusion_replay_hook=self.replay_confusion_dialogue_attributions,
+            max_awareness_calls_per_cycle=awareness_max_calls_per_cycle,
         )
         self._profile_consolidator: ProfileConsolidator | None = None
         if profile_consolidation_enabled:

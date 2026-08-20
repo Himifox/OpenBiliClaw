@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.discovery.style_keys import STYLE_KEY_PROMPT_TEXT, normalize_style_key
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+from openbiliclaw.soul.activity_envelope import (
+    ActivityEnvelope,
+    ActivityEnvelopeManifest,
+    baseline_interests,
+    build_activity_envelopes,
+)
 from openbiliclaw.soul.event_prompt_views import (
     build_cognition_event_view_v1,
     normalize_cognition_input_view,
@@ -1069,6 +1076,223 @@ def build_awareness_with_confusions_prompt(
         {"role": "system", "content": _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
+
+
+_BOUNDED_AWARENESS_SYSTEM_PROMPT = """
+<task>
+根据已经完成身份关联的近期活动信封，生成谨慎的觉察笔记和少量疑惑候选。
+</task>
+
+<rules>
+1. 只返回一个严格 JSON object，包含 notes 和 confusions 两个数组。
+2. 每条 note 必须包含 date / observation / trend / emotion_guess / source_refs。
+3. source_refs 只能从 activity_envelopes 中的 ref 原样选择；禁止编造、禁止按标题猜测。
+4. 每条 confusion 必须包含 topic / observation / interpretation /
+   interpretation_confidence / source_refs；真的不确定时才生成，最多 2 条。
+5. activity_envelopes 内的作者、行为和 matched_interests 已由代码绑定；不得把另一个信封的
+   作者或兴趣移到当前信封，也不得推断缺失作者。
+6. baseline_interests 只是整体理解背景，不能单独作为具体观察的 source_refs。
+7. 不要复述内部编号，不要输出 event id、URL、用户身份或数据库字段。
+</rules>
+
+<output_schema>
+{
+  "notes": [
+    {
+      "date": "2026-08-20",
+      "observation": "最近按需查看 AI 模组配置教程。",
+      "trend": "从泛浏览转向解决具体配置问题。",
+      "emotion_guess": "可能处于主动实践阶段。",
+      "source_refs": ["E001", "E002"]
+    }
+  ],
+  "confusions": []
+}
+</output_schema>
+""".strip()
+
+
+@dataclass(frozen=True)
+class BoundedAwarenessPrompt:
+    """One bounded prompt plus its private identity manifest."""
+
+    messages: list[dict[str, str]]
+    manifest: ActivityEnvelopeManifest
+    consumed_events: tuple[dict[str, object], ...]
+    estimated_input_tokens: int
+    section_estimated_tokens: dict[str, int]
+
+
+def _bounded_scalar(value: object, *, limit: int = 240) -> object:
+    if isinstance(value, str):
+        return " ".join(value.split())[:limit]
+    if isinstance(value, dict):
+        return {
+            str(key): _bounded_scalar(item, limit=limit)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if item not in (None, "", [], {})
+        }
+    if isinstance(value, list | tuple):
+        return [_bounded_scalar(item, limit=limit) for item in value[:20]]
+    return value
+
+
+def _bounded_soul_view(soul_profile: dict[str, object]) -> dict[str, object]:
+    profile_view = build_cognition_profile_view_v1(
+        soul_profile=soul_profile,
+        preference_summary={},
+        recent_awareness=[],
+        active_insights=[],
+    )
+    allowed = (
+        "personality_portrait",
+        "core",
+        "values_layer",
+        "role",
+        "surface",
+        "source_platform_mix",
+    )
+    return {
+        key: _bounded_scalar(profile_view.stable_soul[key])
+        for key in allowed
+        if key in profile_view.stable_soul
+    }
+
+
+def _bounded_recent_awareness(soul_profile: dict[str, object]) -> list[dict[str, str]]:
+    raw = soul_profile.get("recent_awareness")
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in raw[-8:]:
+        if not isinstance(item, dict):
+            continue
+        projected = {
+            key: " ".join(str(item.get(key, "") or "").split())[:240]
+            for key in ("observation", "trend", "emotion_guess")
+            if str(item.get(key, "") or "").strip()
+        }
+        if projected:
+            result.append(projected)
+    return result
+
+
+def _bounded_active_insights(soul_profile: dict[str, object]) -> list[dict[str, object]]:
+    raw = soul_profile.get("active_insights")
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, object]] = []
+    for item in raw[-8:]:
+        if not isinstance(item, dict):
+            continue
+        hypothesis = " ".join(str(item.get("hypothesis", "") or "").split())[:240]
+        if not hypothesis:
+            continue
+        projected: dict[str, object] = {"hypothesis": hypothesis}
+        confidence = item.get("confidence")
+        if isinstance(confidence, int | float):
+            projected["confidence"] = max(0.0, min(1.0, float(confidence)))
+        status = str(item.get("status") or item.get("user_verdict") or "").strip()
+        if status:
+            projected["status"] = status[:24]
+        result.append(projected)
+    return result
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _conservative_tokens(text: str) -> int:
+    """Conservative tokenizer-independent upper bound for ordinary UTF-8 text."""
+
+    return len(text.encode("utf-8"))
+
+
+def _bounded_sections(
+    *,
+    soul_profile: dict[str, object],
+    preference_summary: dict[str, object],
+    envelopes: tuple[ActivityEnvelope, ...],
+) -> tuple[list[tuple[str, object]], ActivityEnvelopeManifest]:
+    manifest = ActivityEnvelopeManifest(envelopes=envelopes)
+    prompt_envelopes = [envelope.prompt_view(ref) for ref, envelope in manifest.by_ref().items()]
+    return (
+        [
+            ("soul_baseline", _bounded_soul_view(soul_profile)),
+            ("baseline_interests", baseline_interests(preference_summary)),
+            ("recent_awareness", _bounded_recent_awareness(soul_profile)),
+            ("active_insights", _bounded_active_insights(soul_profile)),
+            ("activity_envelopes", prompt_envelopes),
+        ],
+        manifest,
+    )
+
+
+def _render_bounded_user(sections: list[tuple[str, object]]) -> str:
+    blocks: list[str] = []
+    for name, value in sections:
+        if value in (None, "", [], {}):
+            continue
+        blocks.extend((f"<{name}>", _json_text(value), f"</{name}>"))
+    return "\n\n".join(blocks)
+
+
+def build_bounded_awareness_with_confusions_prompt(
+    *,
+    events: list[dict[str, object]],
+    preference_summary: dict[str, object],
+    soul_profile: dict[str, object],
+    target_input_tokens: int = 24_000,
+) -> BoundedAwarenessPrompt:
+    """Build an identity-safe prompt whose event prefix fits a hard budget.
+
+    ``target_input_tokens`` is deliberately checked using UTF-8 byte length
+    when a provider tokenizer is unavailable.  That overestimates common BPE
+    tokenizers and therefore fails safe before a paid request.
+    """
+
+    all_envelopes = build_activity_envelopes(events, preference_summary)
+    selected: list[ActivityEnvelope] = []
+    system_tokens = _conservative_tokens(_BOUNDED_AWARENESS_SYSTEM_PROMPT)
+    budget = max(4_000, int(target_input_tokens))
+    for envelope in all_envelopes:
+        trial = tuple([*selected, envelope])
+        sections, _ = _bounded_sections(
+            soul_profile=soul_profile,
+            preference_summary=preference_summary,
+            envelopes=trial,
+        )
+        total = system_tokens + _conservative_tokens(_render_bounded_user(sections))
+        if selected and total > budget:
+            break
+        if total > budget:
+            raise ValueError("one minimal activity envelope exceeds awareness input budget")
+        selected.append(envelope)
+
+    selected_tuple = tuple(selected)
+    sections, manifest = _bounded_sections(
+        soul_profile=soul_profile,
+        preference_summary=preference_summary,
+        envelopes=selected_tuple,
+    )
+    user_content = _render_bounded_user(sections)
+    section_tokens = {
+        name: _conservative_tokens(_json_text(value))
+        for name, value in sections
+        if value not in (None, "", [], {})
+    }
+    consumed_events = tuple(event for envelope in selected_tuple for event in envelope.raw_events)
+    return BoundedAwarenessPrompt(
+        messages=[
+            {"role": "system", "content": _BOUNDED_AWARENESS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        manifest=manifest,
+        consumed_events=consumed_events,
+        estimated_input_tokens=system_tokens + _conservative_tokens(user_content),
+        section_estimated_tokens=section_tokens,
+    )
 
 
 _INSIGHT_SYSTEM_PROMPT = """
