@@ -1460,6 +1460,7 @@ class RuntimeContext:
             discovery_engine=new_discovery_engine,
             recommendation_engine=new_recommendation_engine,
             discovery_candidate_pipeline=new_candidate_pipeline,
+            background_expression_copy_enabled=(self.surface_copy_mode == "background"),
             keyword_planner=new_keyword_planner,
             keyword_fetch=new_keyword_fetch,
             source_incremental_sync=new_source_incremental_sync,

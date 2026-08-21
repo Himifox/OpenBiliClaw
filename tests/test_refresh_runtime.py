@@ -1296,6 +1296,32 @@ async def test_periodic_pool_precompute_reports_newly_available_inventory() -> N
     ]
 
 
+async def test_lazy_periodic_pool_drain_classifies_without_copy() -> None:
+    class _ClassifyingRecommendationEngine(_FakeRecommendationEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.classify_calls: list[tuple[object, int]] = []
+
+        async def classify_pool_backlog(self, *, profile: object, limit: int) -> int:
+            self.classify_calls.append((profile, limit))
+            return 3
+
+    recommendations = _ClassifyingRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        background_expression_copy_enabled=False,
+    )
+
+    await controller._drain_pool_precompute_backlog()
+
+    assert recommendations.classify_calls == [({"profile": "ok"}, 60)]
+    assert recommendations.pool_copy_calls == []
+
+
 async def test_refresh_controller_reports_zero_replenishment_without_false_positive_copy() -> None:
     event_hub = _FakeEventHub()
     controller = ContinuousRefreshController(
@@ -1853,6 +1879,28 @@ async def test_candidate_eval_drain_runs_when_refresh_plan_empty() -> None:
     assert result["cached"] == 3
     assert pipeline.drains == [30]
     assert recommendations.pool_copy_calls == [({"profile": "ok"}, 60)]
+
+
+async def test_lazy_candidate_eval_admission_does_not_precompute_copy() -> None:
+    pipeline = _FakeCandidatePipeline()
+    recommendations = _FakeRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        discovery_candidate_pipeline=pipeline,
+        background_expression_copy_enabled=False,
+    )
+
+    result = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+        batch_size=30,
+    )
+
+    assert result["cached"] == 3
+    assert recommendations.pool_copy_calls == []
 
 
 async def test_candidate_eval_drain_defaults_to_larger_eval_batch() -> None:

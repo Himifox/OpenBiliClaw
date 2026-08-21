@@ -6,6 +6,11 @@
 
 ## 未发布
 
+- **修复 lazy 宿主仍被周期任务预写推荐文案**：`surface_copy_mode="lazy"` 现在显式传入
+  refresh controller；独立 pool-precompute tick、候选评估入池和 refresh 完成后的 legacy
+  fallback 都只做分类与 semantic-ready 维护，不再调用 `recommendation.write_expression`。
+  默认 background 与 OpenClaw one-shot 文案路径保持不变，配置热重载后仍保留该门禁。
+
 - **Awareness 127k 输入热点增加身份安全的 bounded-v2**：连续同内容、同会话、同作者的事件及其本地匹配兴趣作为不可拆 activity envelope 装箱；完整事件账本不删不改，模型不可见 URL、事件 ID、内部 identity key 或全量创作者清单。模型只返回 `E001` 引用，Core 用私有 manifest 精确还原 event IDs，未知引用失败关闭。输入使用 UTF-8 字节保守上界（目标 24k、硬上限 32k），每周期默认最多两次，水位只在完整成功后连续推进。实际 28 条事故批次只读重放保持 28→28 精确分区，保守上界 17,934，对比原 provider-reported 127,198；默认仍保留已过质量门的 compact-v1，bounded-v2 须按 provider/model 显式启用。
 
 - **主动候选摘要从存在性门禁升级为独立可靠度评分**：Discovery 的既有单条/批量

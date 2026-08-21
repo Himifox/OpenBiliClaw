@@ -26,7 +26,9 @@ CLI、Popup 查询仍要求非空 copy，旧门禁没有全局放松。主动候
 
 Core 内部最多返回 3 条供宿主适配层取排名第 1 条；这不等于 Phase 1 接收 3 条。
 NEKO Phase 1 只决定“现在是否适合提起”，OBC 仍负责“是否值得推荐”。lazy 宿主路径
-后台 `recommendation.write_expression` 为 0，最终表达只由 NEKO Phase 2 负责。
+后台 `recommendation.write_expression` 为 0：独立 pool-precompute tick、候选评估入池和
+refresh 完成后的旧 fallback 都只能继续分类与维护 semantic-ready 候选，不能预写推荐文案；
+最终表达只由 NEKO Phase 2 负责。Web/CLI 显式调用 `recommend()` 时仍可按需生成兼容文案。
 
 `build_proactive_candidates()` 把非消费式推荐预览投影为三组宿主数据：Tracking 只保存
 稳定 `candidate_id`、内容身份、链接、期限和私有投递引用；Semantics 只包含有界的

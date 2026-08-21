@@ -365,6 +365,10 @@ class ContinuousRefreshController:
     discovery_candidate_pipeline: Any | None = None
     candidate_eval_coordinator: Any | None = None
     expression_copy_coordinator: Any | None = None
+    # ``None`` also means the embedded lazy surface deliberately has no
+    # coordinator. Keep the policy explicit so legacy fallback drains cannot
+    # mistake lazy mode for an unmanaged background runtime.
+    background_expression_copy_enabled: bool = True
     # OpenClaw's bridge is intentionally one-shot: it has no daemon loop to
     # own ExpressionCopyCoordinator.  When supplied, this callback finishes
     # the durable copy stage synchronously after inline admission instead of
@@ -1581,6 +1585,8 @@ class ContinuousRefreshController:
         ``return_exceptions=True`` on the gather, but a logged warning
         from one place is cleaner than scattering try/except).
         """
+        if not self.background_expression_copy_enabled:
+            return 0
         try:
             return await self.recommendation_engine.precompute_pool_copy(
                 profile=profile,
@@ -1834,7 +1840,7 @@ class ContinuousRefreshController:
         except Exception:
             before_pool_count = -1
         try:
-            if self.expression_copy_coordinator is None:
+            if self.expression_copy_coordinator is None and self.background_expression_copy_enabled:
                 await engine.precompute_pool_copy(
                     profile=profile, limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH
                 )
@@ -2587,7 +2593,7 @@ class ContinuousRefreshController:
             elif self.one_shot_expression_copy_callback is not None:
                 if not post_admission_copy_owned:
                     await self._safe_one_shot_expression_copy(profile=profile)
-            else:
+            elif self.background_expression_copy_enabled:
                 await self._safe_precompute_pool_copy(profile=profile)
                 await self._publish_precompute_replenishment_if_needed(
                     before_pool_count=before_pool_count
@@ -2888,7 +2894,7 @@ class ContinuousRefreshController:
             elif self.one_shot_expression_copy_callback is not None:
                 if not post_admission_copy_owned:
                     await self._safe_one_shot_expression_copy(profile=profile)
-            else:
+            elif self.background_expression_copy_enabled:
                 await self._safe_precompute_pool_copy(profile=profile)
             # Pre-warm supergroup-merge embeddings so the popup's "换一批"
             # hot path always hits the L1/L2 cache. These are daemon latency

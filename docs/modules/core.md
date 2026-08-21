@@ -44,8 +44,11 @@ objects remain owned by the host; a database created by Core is closed by Core.
 `surface_copy_mode` defaults to `"background"` for standalone/API compatibility.
 An embedded host may select `"lazy"`: expression-copy coordination is not
 created or restarted, while `preview_proactive_candidates()` reads the separate
-semantic-ready pool. An explicit `recommend()` call still generates and caches
-copy before recording delivery. Hot reload preserves this host-owned mode.
+semantic-ready pool. The runtime controller also carries this policy explicitly:
+periodic pool maintenance, candidate admission, and refresh completion may still
+classify semantic candidates, but cannot fall back to background expression-copy
+generation. An explicit `recommend()` call still generates and caches copy before
+recording delivery. Hot reload preserves this host-owned mode.
 If the LLM registry cannot be built, the default `allow_degraded=True` creates a
 recovery-capable Core. Set it to `False` when an embedding host prefers startup
 to fail immediately. `reload()` never moves a live database: changing
