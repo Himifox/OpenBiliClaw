@@ -674,6 +674,28 @@ async def test_copy_ready_target_clamps_and_rebinds_provider_on_rebuild(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_lazy_copy_policy_survives_runtime_rebuild(tmp_path) -> None:
+    from openbiliclaw.api.runtime_context import build_runtime_context
+    from openbiliclaw.config import Config
+
+    initial = Config(data_dir=str(tmp_path / "data"))
+    initial.llm.default_provider = "ollama"
+    initial.llm.ollama.model = "llama3"
+    ctx = build_runtime_context(initial, surface_copy_mode="lazy")
+
+    assert ctx.runtime_controller.surface_copy_mode == "lazy"
+    assert ctx.runtime_controller.expression_copy_coordinator is None
+
+    reloaded = Config(data_dir=str(tmp_path / "data"))
+    reloaded.llm.default_provider = "ollama"
+    reloaded.llm.ollama.model = "llama3"
+    await ctx.rebuild_from_config(reloaded)
+
+    assert ctx.runtime_controller.surface_copy_mode == "lazy"
+    assert ctx.runtime_controller.expression_copy_coordinator is None
+
+
+@pytest.mark.asyncio
 async def test_old_engine_commit_callback_uses_current_controller_after_two_reloads(
     tmp_path,
 ) -> None:

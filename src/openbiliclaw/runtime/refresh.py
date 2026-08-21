@@ -592,7 +592,10 @@ class ContinuousRefreshController:
         now = self._now()
 
         def _record(state: dict[str, object]) -> None:
-            previous = max(0, int(state.get("maintenance_refill_backoff_level", 0) or 0))
+            raw_previous = state.get("maintenance_refill_backoff_level", 0)
+            previous = (
+                max(0, int(raw_previous)) if isinstance(raw_previous, (int, str)) else 0
+            )
             level = 0 if cached > 0 else min(5, previous + 1)
             delay = min(6 * 60 * 60, self.refill_cooldown_seconds * (2**level))
             state.update(
@@ -1685,6 +1688,8 @@ class ContinuousRefreshController:
         ``return_exceptions=True`` on the gather, but a logged warning
         from one place is cleaner than scattering try/except).
         """
+        if self.surface_copy_mode == "lazy":
+            return 0
         try:
             return await self.recommendation_engine.precompute_pool_copy(
                 profile=profile,
