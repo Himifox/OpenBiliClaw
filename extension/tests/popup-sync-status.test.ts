@@ -63,4 +63,3 @@ test("storage subscription reacts only to relevant local changes", () => {
   registered?.({ [LAST_SYNC_KEY]: {} }, "local");
   assert.equal(calls, 1);
 });
-

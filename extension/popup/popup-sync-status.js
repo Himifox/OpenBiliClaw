@@ -98,4 +98,3 @@ export function subscribeSyncStorage(
   storageEvents.addListener(handleChange);
   return () => storageEvents.removeListener?.(handleChange);
 }
-
