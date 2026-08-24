@@ -65,6 +65,20 @@ test("background runtime stream passes an explicit short session", () => {
   assert.match(source, /clearSession\(\)\.then\(\(\) => connectRuntimeStream\(\)\)/);
 });
 
+test("background connector never acknowledges host-owned proactive delivery", () => {
+  const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
+  const handlerStart = source.indexOf("async function handleRuntimeEvent");
+  const handlerEnd = source.indexOf("async function flushCapturedEventsForE2E", handlerStart);
+  const handler = source.slice(handlerStart, handlerEnd);
+
+  assert.match(source, /const HOST_OWNED_PROACTIVE_EVENTS = new Set\(/);
+  for (const eventType of ["delight.candidate", "interest.probe", "avoidance.probe"]) {
+    assert.match(source, new RegExp(`"${eventType.replace(".", "\\.")}"`));
+  }
+  assert.match(handler, /HOST_OWNED_PROACTIVE_EVENTS\.has\(eventType\)/);
+  assert.doesNotMatch(source, /acknowledgeDelightSent|\/delight\/sent/);
+});
+
 test("service worker wires X polling, alarm, and immediate task wake", () => {
   const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
   assert.match(source, /startXTaskPolling/);

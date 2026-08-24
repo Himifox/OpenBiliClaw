@@ -6,6 +6,11 @@
 
 ## 未发布
 
+- **NEKO 成为主动搭话的唯一交付者**：轻量浏览器连接器收到
+  `delight.candidate`、`interest.probe` 或 `avoidance.probe` 时只维持传输连接，不再调用
+  `/api/delight/sent` 或把运行时事件冒充为用户可见交付。只有 NEKO 或其它真实可见客户端
+  成功展示后才能记录交付；跳过、打断、拒绝和展示失败均保留候选。
+
 - **NEKO 内嵌推荐池改为预算化按需维护**：Core 新增 reload-stable
   `MaintenancePolicy`。NEKO 使用 30 条有效容量、10 条软目标、低于 4 条才补货、单批
   最多 10 条和单 worker；批次冷却/低产出退避写入 runtime state，重启不能触发补货

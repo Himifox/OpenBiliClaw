@@ -23,6 +23,7 @@
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / V2EX 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 通过插件任务源接入初始化 saved/upvoted/subscribed 信号和 discovery search/hot/subreddit/related；V2EX 普通页面只采集被动阅读行为，任务页由独立 dispatcher 执行四个只读 bootstrap scope；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调；`/api/events` 在 soul 画像明确未初始化时只返回 `not_initialized` 拒收结果，不写 memory，首轮画像信号由 guided init 的来源任务拉取 |
 | 8.3 Browser Connector | ✅ | `popup/` 已收敛为紧凑连接器：显示 Core/NEKO 连接、离线缓存数量、最近同步时间、当前网页来源、11 个来源的本地状态和身份同步反馈，保留端点配置与远程设备配对，并把完整体验统一打开到 `/web`。推荐、内容库、画像、对话、guided init、二维码、调度和完整后端配置不再在插件中重复实现。 |
+| 主动搭话交付所有权 | ✅ | background runtime stream 把 `delight.candidate`、`interest.probe` 与 `avoidance.probe` 视为宿主拥有的主动事件；轻量连接器没有可见推荐面，因此不调用 `/api/delight/sent`，也不把 WebSocket 接收当作展示成功。NEKO 或其它真实可见宿主只有在用户实际看到内容后才记录交付；跳过、打断、拒绝与展示失败不消费候选。 |
 | Durable 对话失败展示 | ✅ | side panel 的主聊天在 `turn.status === "failed"` 时优先渲染后端持久化的安全 `turn.error`，不把历史遗留 `turn.reply` 误当成功；惊喜/探针内联 turn 只有 `completed` 才显示成功并移除已处理探针，`failed` 显示 `turn.error`、恢复 handled/按钮状态并保留卡片供重试。 |
 | Issue #147 聊聊口味 Markdown 渲染 | ✅ | 主聊天、惊喜推荐和兴趣/避雷探针内嵌聊天复用 `web/shared/dialogue-confirmation.js` 的安全 Markdown renderer；popup、桌面 Web、移动 Web 的 AI 回复支持加粗、斜体、标题、列表、代码块、引用和 `http(s)` 链接，原始 HTML / `javascript:` 等不安全内容不会进入 DOM，用户消息仍按纯文本展示。 |
 | 对话确认入口（Wave C/D + 单队列 cutover） | ✅ | popup、移动 Web 与桌面 Web 共用 `web/shared/dialogue-confirmation.js` 渲染 `hypothesis` 卡片、纯提问气泡和普通文字 turn：卡片提供「准 / 不准 / 聊聊 / 稍后」四动作、可展开依据与原地结算态；纯数字、UUID、事件 / note 前缀、BVID 或裸哈希等只有机器 ID 的依据会整项过滤，过滤后为空则不渲染「依据」区。桌面「待聊确认」与插件保持同一套紧凑视觉：柔和品牌色折叠条、数字徽标、轻量箭头和单列小卡片，不再额外加入说明文案或桌面仪表盘式重容器；猜测卡片仍按标题、依据、结算状态、主次动作分层，430px 以下动作改两列，深浅主题、可见 focus 与 reduced-motion 继续沿用全局设计令牌。action 先乐观更新；同步 `200` 直接采用服务端状态，`already_settled`（包括相反 verdict）覆盖本地乐观结果。收到 `202 processing` 才复用各端既有 `fetchChatTurn` 按 `1s/2s/5s`（随后 5s）读取 durable turn，30 秒总截止；终态立即停，连续读取失败、截止或页面 abort 只把本地卡片标为 `retryable_error`，允许刷新/重试，不伪造 durable 失败。三端各自持有 action AbortController，页面卸载会终止轮询。popup 与移动 Web 的「待聊确认」列表调用 `GET /api/chat/pending-confirmations`，主动打开用 `session="popup"`；桌面端镜像相同语义并用 `session="popup"`，侧栏「聊聊口味」显示待聊计数。三端对话记录和待聊列表都使用有界独立滚动，重绘保留读者位置与已展开依据；聊天可见且在线时约每 2.5 秒增量刷新历史，快照未变化不重绘；移动端动作保持两列 44px 触控目标。待聊数字只在三端对话入口显示；service worker 不请求 `?count_only=1`，也不把待聊数写入工具栏，工具栏角标只表达后端不可达或未初始化。三端的画像/认知更新区均只读，主动确认只存在于 durable 对话卡片。后端 deprecated legacy 端点继续保留，新客户端不调用。 |
@@ -503,6 +504,7 @@ CLI 入口：
 - 展示来源状态：只读 `GET /api/sources/status`，区分已就绪、待验证、需要处理、异常与未启用；来源列表和连接设置采用单开折叠，避免窄侧栏出现超长操作路径。
 - 手动同步身份：`OBC_SYNC_IDENTITIES` 只触发已有 Cookie / 登录态同步函数；它不会点赞、收藏、关注或执行其它上游账号写操作。
 - 连接高级项：`popup-backend-config.js` 继续保存 HTTP(S) / 主机 / 端口；`popup-device-auth.js` 与 `popup-ext-login.js` 继续处理远程设备密钥换取短会话。
+- 主动事件边界：background 可以接收主动事件以维持同一 runtime stream，但连接器不会确认交付。`delight.candidate`、`interest.probe` 与 `avoidance.probe` 的展示和成功回执由 NEKO 或其它可见宿主负责。
 
 明确不再由 popup 承载：推荐、内容库、画像、对话、guided init、移动端二维码、调度开关、模型与完整后端配置。这些体验统一由桌面 Web `/web`（以及移动 Web `/m`）提供。
 

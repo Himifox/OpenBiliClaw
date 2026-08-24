@@ -4,8 +4,8 @@
  * Receives behavior events from content scripts,
  * buffers them, and forwards to the backend API.
  *
- * Delight (surprise) notifications are delivered via WebSocket push
- * from the runtime-stream, not HTTP polling.
+ * Runtime-stream events wake transport work. User-visible proactive
+ * delivery remains owned by the active host (NEKO or a visible Web client).
  */
 
 import {
@@ -150,6 +150,11 @@ const HEALTH_FALLBACK_TIMEOUT_MS = 12_000;
 // backend-down case without opening a failing WebSocket, so a fixed 1s cadence
 // is cheap and avoids stale "offline" extension state after the daemon starts.
 const WS_RECONNECT_DELAY = 1_000;
+const HOST_OWNED_PROACTIVE_EVENTS = new Set([
+  "delight.candidate",
+  "interest.probe",
+  "avoidance.probe",
+]);
 type PendingNotification = import("./notifications.js").PendingNotification;
 type PendingCognitionUpdate = import("./notifications.js").PendingCognitionUpdate;
 
@@ -194,19 +199,6 @@ async function acknowledgeCognitionUpdateSeen(id: string): Promise<void> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Delight ACK (HTTP POST after WS push triggers notification)
-// ---------------------------------------------------------------------------
-
-async function acknowledgeDelightSent(bvid: string): Promise<void> {
-  if (!bvid) return;
-  await authenticatedFetch(await apiUrl("/delight/sent"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bvid }),
   });
 }
 
@@ -344,21 +336,13 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
     return;
   }
 
-  // v0.3.16+: OS-level Chrome toasts are disabled by user request.
-  // Probe and delight events surface inside the
-  // popup via its own runtime-stream WS handler — no chrome
-  // notification toast at the bottom-right of the screen.
-  if (eventType === "interest.probe" || eventType === "avoidance.probe") {
+  // The compact connector has no visible recommendation/probe surface.
+  // Receiving a runtime event is transport presence, not proof that the user
+  // saw it. NEKO (or another visible host) owns presentation and may record
+  // delivery only after the line is actually shown.
+  if (HOST_OWNED_PROACTIVE_EVENTS.has(eventType)) {
     return;
   }
-
-  if (eventType !== "delight.candidate") return;
-
-  const bvid = String(event.bvid ?? "");
-  if (!bvid) return;
-
-  // Still ack the backend so the same bvid isn't re-pushed forever.
-  void acknowledgeDelightSent(bvid);
 }
 
 async function flushCapturedEventsForE2E(): Promise<void> {
