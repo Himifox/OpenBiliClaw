@@ -7,7 +7,7 @@ V2EX 已接入公开 discovery、可选 PAT、浏览器只读 bootstrap 和 guid
 - 公开取数使用匿名 JSON API、JSON Feed 和 RSS/XML Feed；
 - 可选 PAT 使用 Bearer 认证访问 API 2.0，并可通过 `/member` 做 live probe；
 - `search`、`node`、`tab`、`hot`、`latest` 五个分支统一转换为 `DiscoveredContent`，进入共享 `discovery_candidates` / evaluator / admission；
-- 桌面 Web、移动 Web 推荐卡和插件 popup 推荐卡都识别 `v2ex:<topic_id>` 与无封面文字卡；
+- 桌面 Web、移动 Web 与 NEKO 推荐卡识别 `v2ex:<topic_id>` 与无封面文字卡；插件只显示 V2EX 来源与任务就绪状态；
 - 扩展任务支持 `public_topics`、`public_replies`、`favorite_topics`、`favorite_nodes` 四个只读 scope，结果通过 staged task-result 进入统一事件入口；
 - Reply 按 Topic 聚合后生成 `discussion_reply`，不作为独立推荐项；初始化事件会投影到 `v2ex_node_affinity`，Node producer 可用真实 Node 偏好补充召回；
 - `V2EXTaskQueue` 已纳入多来源 bootstrap 串行准入和增量调度；扩展会为每个 scope 给出保守的 `scope_complete` 证据，达到页数上限、登录失败或解析失败都不能冒充完整快照；
@@ -15,9 +15,9 @@ V2EX 已接入公开 discovery、可选 PAT、浏览器只读 bootstrap 和 guid
 - 身份由后端按 PAT verified → 浏览器 observed → 配置 / 用户 accepted 的阶梯统一解析；证据冲突时账号画像、Node Affinity 和收藏快照暂停，匿名公开 discovery 继续工作；增量 seen key、快照和 Node Affinity 均按账号隔离；
 - V2EX Client 和扩展任务均只读，不发帖、不回复、不感谢、不收藏、不关注 Node；真实匿名 smoke 已覆盖 Hot / Latest / Node / Tab / Search、Atom 字段解析、旧 Topic 详情和正式 producer 文字卡入队；HTTP body 先按解码后字节做上限检查，再移除已消费的 `Content-Encoding` / `Content-Length` / `Transfer-Encoding`，避免 gzip 响应在重新物化时被二次解码。
 
-2026-08-10 已在 `8420` 真实后端、已安装开发扩展和真实登录账号完成最终只读 E2E：最终构建通过 `/api/extension/reload` 热更新并确认 delivered，四个 scope 在约 9 秒内返回发布 4、讨论 Topic 19、收藏主题 1、收藏 Node 0，24 条 canonical 事件全部通过稳定 ID / URL / source / satisfaction 断言，四个 `scope_complete` 均为 `true`。`smoke_only` 后真实库的 V2EX event、seen、收藏快照和 Node Affinity 增量均为 0；同一批事件在隔离库首次写入 24 条、第二次 24 条全部判重。五路公开请求再次通过（Search / Tab / Hot / Latest 各 3 条，Node 5 条）；使用用户真实 LLM / Embedding 配置的隔离正式 Node producer 发现 3、入待评估池 3、评估 3、准入缓存 3，只产生 1 条脱敏 LLM usage 记录，临时库退出即删除。桌面、移动 Web 与 popup 的构建截图均验证 V2EX 紧凑文字卡，不再为无封面 Topic 预留 16:9 空白媒体区。
+2026-08-10 已在真实后端、已安装开发扩展和真实登录账号完成只读任务 E2E；桌面与移动 Web 的构建截图验证了 V2EX 紧凑文字卡。旧 popup 推荐截图仅保留为历史证据，不代表当前连接器界面。
 
-身份冲突卡片已在桌面设置页和插件 popup 提供交互式账号选择；选择新浏览器账号后必须重新执行完整 guided init。新账号事件先以 inactive 投影暂存，只有 Soul Profile 构建提交成功后才原子切换 active identity；旧账号事件、Node Affinity 和收藏快照继续按账号保留，不会混入当前画像。Node Affinity 已实现首版确定性意图折扣、180 天半衰期、收藏 Node 的衰减下限，以及投入阅读 Topic 的幂等计数。公开 discovery 不依赖登录态；PAT 与浏览器登录态保持为两条独立能力。
+身份冲突的交互式账号选择由桌面设置页负责；插件只上报浏览器观察到的身份。选择新账号后必须重新执行完整 guided init；公开 discovery 不依赖登录态。
 
 官方协议依据：[V2EX API 2.0](https://global.v2ex.com/help/api) 和 [V2EX 官方 RSS / JSON Feed](https://blog.v2ex.com/rss/)。
 

@@ -104,12 +104,7 @@ import type { WeiboTaskResult } from "../content/weibo/task-executor.ts";
 import type { RedditTaskResult } from "../content/reddit/task-executor.ts";
 import type { LinuxdoTaskResult } from "../content/linuxdo/task-executor.ts";
 import type { V2EXScopeResult } from "../content/v2ex/task-executor.ts";
-import {
-  openExtensionUi,
-  parseDelightBvid,
-  parseNotificationBvid,
-  parseCognitionUpdateId,
-} from "./notifications.js";
+import { openExtensionUi } from "./extension-ui.js";
 import {
   startCookieSync,
   handleCookieSyncAlarm,
@@ -155,91 +150,9 @@ const HOST_OWNED_PROACTIVE_EVENTS = new Set([
   "interest.probe",
   "avoidance.probe",
 ]);
-type PendingNotification = import("./notifications.js").PendingNotification;
-type PendingCognitionUpdate = import("./notifications.js").PendingCognitionUpdate;
 
 // ---------------------------------------------------------------------------
-// HTTP helpers (recommendation & cognition — still polled)
-// ---------------------------------------------------------------------------
-
-async function acknowledgeNotificationSent(bvid: string): Promise<void> {
-  if (!bvid) return;
-  await authenticatedFetch(await apiUrl("/notifications/sent"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bvid }),
-  });
-}
-
-async function fetchPendingNotification(): Promise<PendingNotification | null> {
-  const response = await authenticatedFetch(await apiUrl("/notifications/pending"), {
-    method: "GET",
-  });
-  if (!response.ok) {
-    throw new Error(`pending notifications failed: ${response.status}`);
-  }
-  const payload = (await response.json()) as { item?: PendingNotification | null };
-  return payload.item ?? null;
-}
-
-async function fetchPendingCognitionUpdate(): Promise<PendingCognitionUpdate | null> {
-  const response = await authenticatedFetch(await apiUrl("/cognition-updates/pending"), {
-    method: "GET",
-  });
-  if (!response.ok) {
-    throw new Error(`pending cognition updates failed: ${response.status}`);
-  }
-  const payload = (await response.json()) as { item?: PendingCognitionUpdate | null };
-  return payload.item ?? null;
-}
-
-async function acknowledgeCognitionUpdateSeen(id: string): Promise<void> {
-  if (!id) return;
-  await authenticatedFetch(await apiUrl("/cognition-updates/seen"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Polling — recommendation & cognition only (delight is WS-pushed)
-// ---------------------------------------------------------------------------
-
-/**
- * v0.3.16+: OS-level Chrome toasts are disabled by user request.
- *
- * The popup / side panel already surfaces every recommendation,
- * cognition update, delight candidate and interest probe — duplicating
- * them as Chrome toasts at the bottom-right of the screen is intrusive
- * (and tripped a recurring "Unable to download all specified images"
- * Chromium bug that polluted the service-worker console for weeks).
- *
- * We still poll ``/api/notifications/pending`` and call the ack
- * endpoints so the backend's pending queue drains. Functionally this
- * just hides the OS toast surface; popup state is unchanged.
- */
-async function checkPendingNotification(): Promise<void> {
-  try {
-    const item = await fetchPendingNotification();
-    if (item?.bvid) {
-      await acknowledgeNotificationSent(item.bvid);
-      return;
-    }
-    const cognition = await fetchPendingCognitionUpdate();
-    if (cognition?.id) {
-      await acknowledgeCognitionUpdateSeen(cognition.id);
-    }
-  } catch (err) {
-    console.warn(
-      "[OpenBiliClaw] Pending notification ack failed:",
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// WebSocket — runtime stream for delight push notifications
+// WebSocket — runtime stream for transport work and host-owned proactive events
 // ---------------------------------------------------------------------------
 
 let runtimeSocket: WebSocket | null = null;
@@ -557,7 +470,6 @@ async function flushEvents(): Promise<void> {
           // another alarm, so a full offline outbox catches up promptly.
           await drainParkedEvents();
         }
-        await checkPendingNotification();
       } catch {
         console.warn("[OpenBiliClaw] Backend not available, buffering events");
         // The durable inflight owner remains intact for retry.
@@ -622,10 +534,7 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.action.onClicked.addListener((tab) => {
-  void openExtensionUi(chrome, {
-    windowId: tab.windowId,
-    tab: "recommend",
-  });
+  void openExtensionUi(chrome, { windowId: tab.windowId });
 });
 
 async function postXhsObservedUrls(payload: Record<string, unknown>): Promise<void> {
@@ -854,43 +763,9 @@ if (typeof chrome !== "undefined" && chrome.alarms?.onAlarm) {
         }
         if (getBufferLength() > 0) {
           await flushEvents();
-        } else {
-          await checkPendingNotification();
         }
       })();
     }
-  });
-}
-
-// Safari does not implement chrome.notifications (its `notifications`
-// permission is ignored); the OS-toast surface is already disabled for
-// Chrome/Firefox, so this listener only routes the click → UI open when the
-// API exists. Guard it so the worker loads on Safari without throwing.
-if (typeof chrome !== "undefined" && chrome.notifications?.onClicked) {
-  chrome.notifications.onClicked.addListener((notificationId) => {
-    if (notificationId.startsWith("openbiliclaw-probe:")) {
-      void openExtensionUi(chrome, { tab: "profile" });
-      void chrome.notifications.clear(notificationId);
-      return;
-    }
-    const bvid = parseNotificationBvid(notificationId);
-    if (bvid) {
-      void openExtensionUi(chrome, { tab: "recommend" });
-      void chrome.notifications.clear(notificationId);
-      return;
-    }
-    const delightBvid = parseDelightBvid(notificationId);
-    if (delightBvid) {
-      void openExtensionUi(chrome, { tab: "recommend", delightBvid });
-      void chrome.notifications.clear(notificationId);
-      return;
-    }
-    const cognitionId = parseCognitionUpdateId(notificationId);
-    if (!cognitionId) {
-      return;
-    }
-    void openExtensionUi(chrome, { tab: "profile" });
-    void chrome.notifications.clear(notificationId);
   });
 }
 
@@ -903,7 +778,7 @@ void startServiceWorkerAfterRecovery();
 // Popup writes a new backend port → chrome.storage.onChanged fires here.
 // Close the existing runtime-stream WS so the next connect attempt opens
 // against the new origin. All HTTP callers resolve apiUrl() at call time,
-// so no further bookkeeping is needed for polled requests.
+// so no further bookkeeping is needed for later API requests.
 onBackendEndpointChange(() => {
   try {
     runtimeSocket?.close();

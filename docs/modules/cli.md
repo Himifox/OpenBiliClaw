@@ -100,7 +100,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 
 CLI/Agent Bridge 保持兼容但不新增卡片选择 UI，也不伪造 `reply_to_turn_id` 或
 `dialogue_binding`。它们继续走显式 `legacy_direct` 对话入口；chat 现在会返回并持久化
-自己的 `turn_id`，但不加入 API runtime 的 settlement queue；三端图形客户端的
+自己的 `turn_id`，但不加入 API runtime 的 settlement queue；可见图形客户端的
 server-owned binding、context preview 与卡片 action 不改变 CLI 的既有契约。
 
 ## 详细说明
@@ -378,7 +378,7 @@ $ openbiliclaw start
 - 监听插件上报的强信号行为
 - 在阈值满足时自动刷新推荐候选
 - 定时做榜单/探索补货
-- 为插件 popup 和 service worker 提供 `/api/runtime-status` 与通知接口
+- 为桌面/移动/NEKO 提供 `/api/runtime-status` 与通知接口，并为扩展 service worker 提供连接、身份与任务传输状态
 
 启动后除了现有候选池刷新 loop，还会常驻一个低频账户同步 loop：
 - 定期检查观看历史
@@ -703,7 +703,7 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 > 但 init **至少需要一个数据来源**：全部来源都关闭时命令直接报错退出（exit 1）。
 > 所有所选来源都没拉到任何信号时，流水线以 `empty_signals` 失败。
 
-> v0.3.102+：来源采集步骤的核心抽成共享异步流水线 `cli.run_guided_init`，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动（交互提示 / 摘要仍在命令里），后端图形化初始化 `POST /api/init` 复用同一协程。CLI 行为 / 输出 / 退出码不变。**也可以不进终端**：插件「推荐」tab 未初始化时直接点「开始初始化」，详见 [init 模块文档](init.md) 与 [extension 模块文档](extension.md)。
+> v0.3.102+：来源采集步骤的核心抽成共享异步流水线 `cli.run_guided_init`，CLI 与后端图形化初始化 `POST /api/init` 复用同一协程。无需终端时可在桌面 `/setup/` 或 `/web` 开始初始化；插件不承载初始化 UI。
 
 > Issue #113（v0.3.168+）：共享流水线仅在阶段 2 偏好分析和阶段 3 画像任务的 task-local scope 内绕过库存敏感的后台 admission，避免首次空库存与画像生成互相等待；阶段 4 只在完整画像落盘后开始且不继承 bypass，并同步完成发现、评估、推荐文案与 canonical 可用性校验。正向兴趣 / 避雷探针移到 init wrapper 恢复 runtime 后调度，普通后台任务、LLM 总并发 gate 及 Soul 公开 API 不变。
 
@@ -1441,7 +1441,7 @@ openbiliclaw init
 `legacy_direct`：得到回复后仍按既有 detached direct learning 学习，既不提交 API
 runtime 的 `DialogueSettlementQueue`，也不持有 worker guard permit；因此行为不变，
 但不享受队列串行/receipt/guard 保证。Wave 3 的 HTTP `202 processing` 与 30 秒
-卡片轮询只服务 popup、移动 Web 与桌面 Web 卡片，CLI 没有 action HTTP 入口，不新增 poll。输入
+卡片轮询只服务移动 Web、桌面 Web 与 NEKO 等可见宿主，浏览器连接器和 CLI 都没有卡片 action HTTP 入口，不新增 poll。输入
 `exit`、`quit` 或空行可结束。聊天内容
 仅在得到真实回复后以受控方式积累到长期理解候选中，不会因为一句话立刻改写画像。
 单轮 LLM 失败会打印安全、可操作的错因（不显示上游异常原文），REPL 继续接受下一轮输入。

@@ -1,6 +1,6 @@
 # 手动端到端联调
 
-> 用于验证 CLI 首跑、插件采集、持续补货和浏览器通知是否在真实环境中串通。
+> 用于验证 CLI 首跑、插件连接/采集、持续补货，以及 NEKO 或其它可见宿主的主动消息交付边界。
 
 ## 前置条件
 
@@ -66,27 +66,16 @@ curl http://127.0.0.1:8420/api/runtime-status
 - `runtime-status.pending_signal_events` 会先升高，再在自动刷新后归零
 - `runtime-status.last_refresh_at` 发生变化
 
-## 侧边栏验证
+## 连接器侧边栏验证
 
-### 推荐 tab
-
-- 能显示连接状态
-- 未初始化时提示先跑 `openbiliclaw init`
-- 有候选但正在补货时提示“正在根据你最近的新行为补货”
-- 有推荐时能展示推荐卡片
-
-### 我的画像 tab
-
-- 能显示画像摘要、核心特质、深层需求和当前偏好
-
-### 和阿B聊聊 tab
-
-- 能发送消息并收到回复
-- 聊天后数据库中应新增 `dialogue` 事件
+- 能显示连接状态、后端地址和当前来源
+- 能显示身份同步与离线 outbox 摘要
+- 能手动触发同步并打开主应用
+- 不出现推荐、画像、聊天、初始化或完整配置入口
 
 ## 推荐反馈
 
-在侧边栏中分别测试：
+在桌面 Web、移动 Web 或 NEKO 中分别测试：
 
 - `喜欢`
 - `不喜欢`
@@ -99,25 +88,18 @@ sqlite3 data/openbiliclaw.db "select id,bvid,feedback_type,feedback_note,feedbac
 sqlite3 data/openbiliclaw.db "select id,event_type,title,metadata from events where event_type='feedback' order by id desc limit 10;"
 ```
 
-## 浏览器通知
+## 主动消息交付
 
-1. 让系统产生一条高置信、未展示、未通知过的推荐
-2. 等待 `service worker` alarm 或新事件 flush 成功
-3. 观察是否弹出浏览器通知
-4. 点击通知，确认跳转到目标 B 站视频页
-
-校验：
-
-```bash
-curl http://127.0.0.1:8420/api/notifications/pending
-sqlite3 data/openbiliclaw.db "select bvid,notification_sent,notified_at from content_cache where notification_sent=1 order by notified_at desc limit 10;"
-```
+1. 让系统产生一条尚未展示的 delight / probe 候选。
+2. 只保持插件 background 在线，确认不会出现浏览器系统通知，也不会写 sent/seen/delivered。
+3. 打开 NEKO 或其它支持主动消息的真实可见宿主，确认候选成功渲染后才记录交付。
+4. 中断、拒绝或渲染失败时，候选必须保持可重试，不能静默消费。
 
 ## 期望结果
 
 - CLI 能完成首跑初始化
 - 插件能持续上报行为
 - 后端能自动补货候选池
-- 侧边栏能读到运行状态与新推荐
-- 高置信推荐会触发浏览器通知
-- 反馈和聊天都会继续推动系统理解用户
+- 侧边栏只显示连接器状态，不承载推荐或聊天
+- 插件 background 不会把未展示候选确认成已送达
+- 可见宿主中的反馈和聊天继续推动系统理解用户

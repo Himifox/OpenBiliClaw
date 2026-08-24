@@ -470,7 +470,7 @@ data/memory/
 ├── account_sync_state.json     # 账户同步游标
 ├── discovery_runtime.json      # 候选池刷新游标
 ├── insight_candidates.json     # 聊天候选洞察（中间态）
-└── cognition_updates.json      # 认知变化记录（供插件通知）
+└── cognition_updates.json      # 认知变化记录（供可见宿主与画像页）
 ```
 
 | 文件 | 用途 | 主要消费者 |
@@ -482,7 +482,7 @@ data/memory/
 | `account_sync_state.json` | 记录历史/收藏/关注的增量同步游标和签名 | AccountSyncService |
 | `discovery_runtime.json` | 记录候选池刷新时间、通知游标、最近话题 | RefreshController |
 | `insight_candidates.json` | 聊天中提取的候选洞察，等待置信度达标 | SoulEngine |
-| `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → 浏览器插件通知 |
+| `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → NEKO / Web 可见界面 |
 
 **设计原则**：每种状态独立文件，不和画像数据混存。这样 feedback 游标的写入不会锁住 preference 文件，各子系统可以独立推进。
 

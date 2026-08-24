@@ -172,15 +172,15 @@ X 的 `live_probe` 只调用 `twitter-cli` 的只读 `fetch_me()` 账户状态�
 
 重放必须能被前端认出来，所以响应带两个字段：`replayed`（这次调用有没有真的干活）和 `retry_after_seconds`（还要等多久才会重新探测）。少了它们，一次被去抖的点击和一次真探测在响应里逐字节相同 —— 刚修好 Cookie 的用户再点一次，拿回缓存里的旧失败，会以为没修好。`retry_after_seconds` 由后端下发而不是前端各写一个 `10`，理由同 I4：两端各存一份常量，就是下一次漂移。
 
-### 0.3 桌面与插件「测试连接」按钮（移动端有意排除）
+### 0.3 桌面「测试连接」与插件连接器状态（移动端有意排除凭据管理）
 
-桌面 Web（`web/desktop/index.html` 的 `.source-status-row`）与插件 popup（`popup/popup.html` 的 `.settings-source-card`）每个平台各一个按钮，走同一套 DOM 约定：`renderProbePending()` → await → `renderVerifyResult()`，tone 写在 `dataset.tone`、文案写在 `textContent`，与「模型」tab 的 LLM 探测共用 `setProbeStatus()`。移动端当前有意排除凭据管理与「测试连接」；该排除必须写进规格和契约测试，saved-sync 等消费面仍要能展示真实登录需求。
+桌面 Web（`web/desktop/index.html` 的 `.source-status-row`）拥有每个平台的凭据编辑与「测试连接」按钮，按 `renderProbePending()` → await → `renderVerifyResult()` 渲染本次验证结论；tone 写在 `dataset.tone`、文案写在 `textContent`，并与「模型」tab 的 LLM 探测共用 `setProbeStatus()`。插件 popup 是轻量连接器：只展示后端连接、来源识别和只读状态摘要，并在需要时同步浏览器可观察到的身份/登录信号；它不调用 credential/verify 接口，也不复制完整设置表单。移动端当前同样有意排除凭据管理与「测试连接」；这些排除必须写进规格和契约测试，saved-sync 等消费面仍要能展示真实登录需求。
 
 三条硬规矩：
 
 1. **tone 三态**：`verified` → `success`（绿）、`failed` → `error`（红）、`indeterminate` → `neutral`（蓝）。`neutral` 是本次新增的 CSS tone，**不能复用 `pending`** —— 那是「探测中」的灰，让终态和加载态长得一样。
 2. **文案 100% 来自后端 `message`**，前端不得出现平台专属字符串（I4，指标脚本第 2 项会抓）。前端唯一自造的文案是「连不上我们自己的后端」那一条，且同样按 `indeterminate` 渲染 —— 后端连不上不能说明平台凭据坏了。
-3. **状态标签与本次结论分开渲染**：`auth.verification` 驱动上方的「接入：…」badge，`outcome` 只驱动按钮旁那行字。小红书 / 知乎在插件没连时就是这个样子 —— badge 保持「状态待验证」，按钮旁是中性的「5 秒内没有收到回报」，绝不是绿色「已验证」配「插件未连接」。
+3. **状态标签与本次结论分开渲染**：桌面端由 `auth.verification` 驱动上方的「接入：…」badge，`outcome` 只驱动按钮旁那行字；插件连接器只投影后端的权威状态，不自行制造验证结论。小红书 / 知乎在插件没连时，桌面 badge 应保持「状态待验证」，按钮旁显示中性的「5 秒内没有收到回报」，绝不是绿色「已验证」配「插件未连接」。
 
 按钮点完进入可见倒计时（`测试连接（10s）`）并 disable，长度取自 `retry_after_seconds`；真落进去抖窗口的点击（另一端点的、或刷新页面后的）文案会追加「沿用刚才的结果，本次未重新探测」。
 
@@ -287,7 +287,7 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 - 证据有方向和时效：cookie 名存在、旧任务成功和旧心跳只是正向提示；本轮权威端点返回 401、当前 login wall 或 session-current 否定时必须立即压过旧提示。瞬时网络错误是 `indeterminate`，不能把好凭据抹掉，也不能沿用旧绿灯冒充本轮验证。
 - 匿名传输必须是负能力测试：显式剥离 `Cookie`、`Authorization` 和第三方环境注入的 credential，必要时关闭 `trust_env`；证明公开来源不会因为开发机恰好登录而偷偷变成私有路径。
 
-若来源支持多条账号路径，把优先级写成单一后端函数，例如：`token /v0/me > 本轮显式值或配置值 > 扩展身份 > 可操作错误`。所有 CLI、setup、桌面和插件入口只负责传递用户输入并展示后端结论。
+若来源支持多条账号路径，把优先级写成单一后端函数，例如：`token /v0/me > 本轮显式值或配置值 > 扩展身份 > 可操作错误`。CLI、setup 与桌面入口只负责传递用户输入并展示后端结论；插件连接器只同步浏览器可观察身份并展示后端状态摘要。
 
 ## 1. 调研和架构选择
 
@@ -425,6 +425,7 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 - 一次 reload 只重启当前已安装 build，不会自动部署 worktree 新产物。真机前记录 extension version/ID、build 绝对路径和 hash；Chrome/Firefox 输出目录要隔离清理，按各自 manifest 逐一验证 JS/CSS/icon/WAR 存在，避免后构建的 Firefox 清掉 Chrome 资产。
 - 现代站点常把按钮放在 Web Components / open shadow root 里；点击 / 分享 / 收藏等 E2E selector 要能处理 open shadow DOM、slot、icon-only button 和动态 aria/title/data-testid。
 - 默认 E2E 只跑不改变账号状态的动作。`like`、`favorite`、`follow`、`save`、`upvote`、`subscribe` 等会改真实账号状态的动作必须有显式 `allow_state_changing` / 测试号 / 用户授权。
+- 插件 popup 是连接器，不是推荐/画像/聊天 surface。background 收到推荐、认知更新、delight 或 probe 只能用于传输与宿主唤醒；没有可见展示就不得调用 sent/seen/delivered 类接口，也不得靠轮询清空宿主待展示队列。manifest 不应保留仅服务已移除 OS toast 的 `notifications` 权限。
 - 行为事件采集要验证 DB 里的统一事件：`source_platform`、稳定内容 ID、URL、作者 / subreddit / topic、target metadata 和 dedupe key 都要能追溯。
 - 测试覆盖 URL 分类、任务校验、timeout、登录失败、分支 cap、normalizer、dispatcher 回传，以及 active/background/hidden × SPA/full-nav × response-before/after-listener × DOM/API 的适用矩阵。真空、未观察、登录墙、限流和解析错误必须分别断言。
 
@@ -460,7 +461,7 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 - `/api/config` GET/PUT 要 round-trip 新字段，旧 `config.toml` 缺字段时按默认值回填。
 - 不要假设 provider registry 会自动生成所有 API 字段。`SourcesStatusResponse`、`SourcesCredentialsResponse`、`SourcesConfigOut` 与 `GET /api/sources/credentials` 当前都可能有手写平台字段/组装；contract audit 必须比较 canonical family 与 provider/verify/spec/model/endpoint/shared `SOURCE_KEYS`/init roster/source policy 的集合，能力例外只来自契约。
 - 局部更新语义必须一致：字段省略 = 保留已存值，空字符串 = 用户显式清除，掩码回显 = 不覆盖。表单需要分别记录「用户是否触碰」和「prefill 是否成功」；pending / failed prefill 留下的空框绝不能清掉配置。
-- 保存成功也可能带 warning（常见为 HTTP 202）。setup、桌面和插件必须解析并展示 2xx 响应里的 `warnings`，不能只渲染 4xx/5xx。
+- 保存成功也可能带 warning（常见为 HTTP 202）。setup 和桌面必须解析并展示 2xx 响应里的 `warnings`，不能只渲染 4xx/5xx；插件连接器不保存业务配置。
 - `/api/sources/status` 要支持该来源真实状态枚举。插件任务源常见 `unverified`：尚无任务证明不是失败，测试不能只允许 `ready/missing`。
 - 保存 credential、插件 login sync、身份切换、source toggle 和 runtime config apply 后，setup、桌面与 popup 都要在无需整页刷新时收敛到后端最新状态；旧 heartbeat/缓存响应不得覆盖后到的新 authoritative verdict。
 - 来源 enabled 轴与 credential/auth 轴分开计算。即使来源关闭，也要展示已存凭据、被拒状态和可执行下一步；不能在 `enabled=false` 时提前 return，把凭据状态藏掉。
@@ -613,7 +614,7 @@ Bangumi 复盘后新增的必测矩阵：
 - `extension/tests/<slug>-adapter.test.ts`
 - `extension/tests/<slug>-task-dispatcher.test.ts`
 - `extension/tests/<slug>-task-executor.test.ts`
-- popup/settings/init 相关测试
+- popup connector 的来源识别、状态摘要、身份同步、endpoint/配对和“无旧业务入口”契约测试
 - Chrome/Firefox 两份 manifest 的 referenced asset/WAR 存在性；active/background/hidden、SPA/full-nav、response-before/after-listener、DOM/API 按契约覆盖。
 
 原生保存 executor 还必须覆盖 strict task/page/item/type 关联、full ancestor visibility、closest identity fence、hidden/related dialog、同名 ambiguity、checked idempotency，以及 directional action-local risk。需要命名容器的平台必须在创建后 close/reopen/re-query；创建失败或重查不一致不得 fallback 到其它容器。fixture 接线完成不等于真实账号验证，文档和 PR 必须分别报告两种状态。

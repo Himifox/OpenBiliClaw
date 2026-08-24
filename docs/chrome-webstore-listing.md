@@ -14,7 +14,7 @@
 ## Short Description
 
 ```text
-需本地后端的十一来源内容发现 AI Agent：跨平台推荐、私有画像与可反馈侧边栏
+连接十一类内容来源与本地 OpenBiliClaw：同步登录态、行为信号并执行只读任务
 ```
 
 ## Detailed Description
@@ -22,7 +22,7 @@
 将下面的纯文本完整复制到 Chrome Web Store 的 `Detailed description` 字段。
 
 ```text
-OpenBiliClaw 是一个需要本地后端运行的、本地优先、私有、开源的个性化内容发现 Agent。它把你授权范围内的 B站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX 与微博内容汇合成跨来源推荐、可查看和纠正的个人画像，以及能继续反馈调教的浏览器侧边栏。数据默认保存在你的本机。
+OpenBiliClaw 浏览器插件是本地优先内容发现 Agent 的轻量连接器。它在你授权的 B站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX 与微博页面中同步登录态和行为信号，并执行本地后端下发的只读来源任务。推荐、画像、聊天和主动消息在 NEKO、桌面 Web 或移动 Web 中展示；数据默认保存在你的本机。
 
 项目主页：
 https://whiteguo233.github.io/OpenBiliClaw/
@@ -38,7 +38,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 3. 后端启动后，在电脑上打开：
    http://127.0.0.1:8420/web
 4. 在同一个浏览器登录你准备授权给 OpenBiliClaw 使用的平台；YouTube 等公开内容发现路径不一定需要登录。是否启用某个平台由你在设置页决定。
-5. 打开 OpenBiliClaw 插件侧边栏，确认本地后端连接，按引导初始化画像，然后查看推荐、点喜欢 / 少来点 / 不感兴趣，或直接对话校准。
+5. 打开插件侧边栏确认后端连接、当前来源和身份同步状态；在桌面 Web 或 NEKO 中完成初始化并查看推荐。
 
 支持的平台：
 - B站
@@ -54,10 +54,10 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 微博（公开 discovery 匿名；初始化时可通过已登录浏览器只读导入个人收藏、关注和互动）
 
 这个插件能做什么：
-- 在支持的平台页面识别你授权范围内的内容与互动信号，或执行本地后端下发的来源任务。
-- 把跨平台候选统一筛选，在侧边栏、PC Web 和移动 Web 中展示推荐及推荐理由。
-- 展示可查看、可纠正的私有画像，并通过喜欢、少来点、不感兴趣和聊天反馈继续调整推荐。
-- 在配置页分别展示“来源是否启用”和“接入状态”；“凭据已就绪”“状态待验证”“无需登录”含义不同，不会把仅保存在本地的令牌冒充成实时登录成功。
+- 显示本地后端连接、当前来源、身份同步和离线队列状态。
+- 在支持的平台页面识别你授权范围内的内容与互动信号。
+- 执行本地后端下发的只读来源任务，并把规范化结果送回你的后端。
+- 提供主应用入口；推荐、画像、聊天、初始化和完整配置由主应用负责。
 
 重要说明：
 - 插件不是独立云服务；需要本地后端运行后才有完整体验。
@@ -70,7 +70,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 插件申请 `https://linux.do/*` host permission，用于普通 Linux.do 页面上的统一行为 adapter，以及扩展自己创建的隔离任务 tab。任务 tab 只执行同源只读 GET：公开 search / hot / feed / creator / related discovery 不要求登录，个人 bookmarks / likes / read history 则先由 `/session/current.json` 正面确认当前账号。插件只把 `_t` 是否存在转换为登录布尔；`_t` 值、其他 Cookie、CSRF 数据、原始 JSON/HTML 和挑战页正文都不会上传。任务只回传归一化 topic 字段、scope 计数或结构化错误，不会发帖、点赞、收藏、关注、编辑或执行任何站内状态变更。自动化测试已覆盖任务协议、分页、资源上限、超时和 tab 隔离；2026-08-09 又以已登录 Chrome unpacked extension 完成 bootstrap、五路 discovery、候选入池和无敏感字段回传的真实只读 E2E。Firefox 已完成构建与测试，但尚未做同等实号 E2E。
 - 插件在 `bgm.tv` / `bangumi.tv` 上申请的 host permission 仅用于账号身份识别：读取页面公开的用户 uid 与用户名，实现零配置识别你的 Bangumi 账号；在这两个站点上不读取 Cookie、不采集浏览行为，也不上传任何个人令牌。Bangumi 内容本身由本地后端通过官方匿名只读 API 获取。
 - 插件在 `*.v2ex.com` 上申请的 host permission 仅用于只读 Topic / Node 阅读事件，以及你主动触发的四类初始化或增量任务：本人主题、本人公开回复、收藏主题和收藏 Node。插件只检查 A2 Cookie 是否存在并向你配置的后端发送登录布尔值，不访问、存储或发送 Cookie 值；任务只返回有界的公开渲染字段，不返回页面 HTML、请求头、CSRF / once、私信或浏览器完整历史。V2EX 公开发现由本地后端通过官方只读 API / Feed 完成；OpenBiliClaw 不向 V2EX 发帖、回复、感谢、收藏、取消收藏或关注 Node。
-- 「个人通讯」采集范围除侧边栏聊天消息外，还包含你在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（经网络层在提交成功后采集，仅送本机后端，用于更准确地构建兴趣画像）。
+- 「个人通讯」采集范围包含你在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（经网络层在提交成功后采集，仅送本机后端，用于更准确地构建兴趣画像）；插件本身不提供聊天输入框。
 
 > **发版待办（商店后台隐私披露表单）**：Chrome Web Store 与 Firefox AMO 的数据用途申报中，「个人通讯 / Personal communications」条目需更新描述，覆盖新增的用户提交评论与弹幕正文采集（Firefox manifest 已声明 `personalCommunications`，无需改动权限，仅需同步商店后台文案）。
 
@@ -85,13 +85,11 @@ https://github.com/whiteguo233/OpenBiliClaw/blob/main/README_EN.md
 
 以下文件均为 1280×800，使用固定脱敏数据和当前真实 UI 生成。Developer Dashboard 中删除旧图后，按下面顺序上传：
 
-1. `01-seven-platform-recommendations.png` — 十一来源推荐主视觉，推荐卡和惊喜位都有本地脱敏头图（文件名为兼容既有上传顺序而保留）
-2. `02-three-surfaces.png` — PC、插件、手机三端推荐体验
-3. `03-truthful-status-local-data.png` — 诚实接入状态与本地数据
+现有 `01-seven-platform-recommendations.png`、`02-three-surfaces.png` 和旧 extension 截图展示的是已移除的 popup 推荐界面，属于历史素材，下一次提交前必须替换，不能继续上传。新素材至少应覆盖连接状态、当前来源、身份同步、离线 outbox 和主应用入口；不得把推荐卡、聊天、画像或系统通知画进插件。
 
 仓库路径：`docs/images/chrome-web-store/`。
 
-需要重做截图时：
+旧截图生成命令暂时保留用于历史素材复现，不是当前商店提交入口：
 
 ```bash
 .venv/bin/python scripts/build_chrome_webstore_demo_covers.py
@@ -101,8 +99,7 @@ PYTHONPATH=src .venv/bin/python scripts/capture_chrome_webstore_ui.py \
 .venv/bin/python scripts/build_chrome_webstore_assets.py
 ```
 
-该脚本使用脱敏的演示夹具，只用于 Chrome Web Store 素材。README 与 GitHub Pages
-首页引用的 `docs/images/` 截图必须来自真实运行中的 OpenBiliClaw，不得用该脚本覆盖。
+该脚本仍包含旧 popup 推荐场景；完成连接器版捕获脚本前不得用它生成或覆盖商店素材。README 与 GitHub Pages 首页引用的 `docs/images/` 截图必须来自真实运行中的 OpenBiliClaw。
 
 `build_chrome_webstore_demo_covers.py` 会确定性生成 8 张 640×360 本地插画封面，分别供七条演示推荐和一个惊喜推荐使用；演示条数不代表来源总数，它们也不是任何平台或创作者的真实媒体。捕获脚本只连接临时 `127.0.0.1` 脱敏演示服务，封面也经真实 UI 的本机 `/api/image-proxy` 链路加载，并拦截所有非本机请求；不得用真实 `config.toml`、数据库、Cookie、账号名或画像文本生成商店素材。
 

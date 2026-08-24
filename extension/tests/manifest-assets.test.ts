@@ -54,6 +54,13 @@ test("manifest uses side panel instead of popup", () => {
   assert.equal("default_popup" in (manifest.action ?? {}), false);
 });
 
+test("connector manifests do not request the unused notifications permission", () => {
+  for (const manifestName of ["manifest.json", "manifest.firefox.json", "manifest.safari.json"]) {
+    const manifest = JSON.parse(readFileSync(join(process.cwd(), manifestName), "utf8"));
+    assert.equal(manifest.permissions?.includes("notifications"), false, manifestName);
+  }
+});
+
 test("extension package version files stay aligned", () => {
   const root = process.cwd();
   const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {

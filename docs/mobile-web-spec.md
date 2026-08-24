@@ -52,14 +52,14 @@
    - 消息历史
    - 文本输入 & 发送
    - AI 思考中状态
-   - 与插件、桌面 Web 共享 `session=popup` 的主聊天历史；普通文字写入 `scope=chat`，消息里的兴趣 / 避雷「多聊聊」分别写入 `scope=probe` / `scope=avoidance_probe`，三类文字轮次在主对话中按时间顺序对齐；聊天页可见且在线时约每 2.5 秒检查一次新 turn，历史未变化不重绘，用户阅读旧消息时保留滚动位置
-   - 与插件共享 `session=popup` 的 durable 对话历史；历史读取不限定 scope，同时展示 `hypothesis` 觉察卡、`confusion` 澄清问题和 probe 聊天轮次；惊喜推荐 `delight` 仍保留在推荐卡自己的内聊历史中
+   - 与桌面 Web 共享兼容名 `session=popup` 的主聊天历史；普通文字写入 `scope=chat`，兴趣 / 避雷「多聊聊」分别写入 `scope=probe` / `scope=avoidance_probe`
+   - 历史读取不限定 scope，同时展示 `hypothesis` 觉察卡、`confusion` 澄清问题和 probe 聊天轮次；惊喜推荐 `delight` 保留在推荐卡自己的内聊历史中
    - 确认卡 / 疑惑作为一等 durable turn 留在历史中；「聊聊」只提交 `reply_to_turn_id`，从只读 context preview 构建 context bar/reply quote，服务端失败时保留目标与草稿，不根据 current anchor 猜测关系
    - 「待聊确认」列表、主动打开、假设卡「准 / 不准 / 聊聊 / 稍后」四动作与按需结算轮询；纯数字、UUID、BVID、事件前缀或裸哈希等 opaque evidence 不展示
    - 待聊列表、消息历史与 composer 各自使用有界布局；后台刷新保留读者位置、已展开依据、输入草稿与焦点
    - 聊天回复完成后刷新画像摘要与活动流
    - 底部固定两行输入框，优先保留聊天上下文浏览空间
-   - 消息收件箱 overlay（兴趣探测 + 避雷探针 + 惊喜推荐通知；兴趣探测动作对齐插件为「喜欢 / 不喜欢 / 多聊聊」，避雷探针动作为「确实不喜欢 / 不是 / 多聊聊」，惊喜推荐动作对齐插件为「看看 / 喜欢 / 不感兴趣 / 聊一聊」；探针非聊天动作按归一化后的 `type + domain` 键记录独立的 in-flight 状态，关闭再打开 overlay 或其它重渲染仍从该状态恢复整卡禁用、`is-processing` 与 `aria-busy=true`，避免重复提交；只有服务端接受结算或返回终态 no-op 后才写入 terminal handled key 并移除卡片，传输/服务端失败则清除 pending、保留卡片并恢复全部动作供重试；空态提示保持 X 关闭入口可用）
+   - 消息收件箱 overlay（兴趣探测 + 避雷探针 + 惊喜推荐通知）；只有服务端接受结算或返回终态 no-op 后才写入 terminal handled key 并移除卡片，传输/服务端失败则保留卡片并恢复动作供重试
 
 4. **通用**
    - 底部 Tab 导航栏（推荐/画像/对话）
@@ -161,14 +161,14 @@ if web_dir.is_dir():
 
 ### API 调用
 
-移动端 JS 直接调用现有 `/api/*` endpoints，与插件完全相同：
+移动端 JS 直接调用现有 `/api/*` endpoints；浏览器插件不消费这些推荐、聊天或通知接口：
 
 | 页面 | 接口 |
 |------|------|
 | 推荐 | `GET /api/recommendations`, `POST /api/recommendations/reshuffle`, `POST /api/recommendations/append`, `POST /api/recommendation-click`, `GET /api/runtime-status` |
 | Delight | `GET /api/delight/pending-batch`, `POST /api/delight/respond` |
 | 画像 | `GET /api/profile-summary` |
-| 对话 | `POST /api/chat/turns`, `GET /api/chat/turns`, `GET /api/chat/turns/{id}`, `GET /api/chat/pending-confirmations`, `POST /api/chat/pending-confirmations/{ref}/open`, `POST /api/chat/cards/{turn_id}/action`；主对话按 `session=popup` 读取全部对话 scope，与插件、桌面 Web 共享历史，三个可见聊天界面都会在打开时和可见期间刷新历史 |
+| 对话 | `POST /api/chat/turns`, `GET /api/chat/turns`, `GET /api/chat/turns/{id}`, `GET /api/chat/pending-confirmations`, `POST /api/chat/pending-confirmations/{ref}/open`, `POST /api/chat/cards/{turn_id}/action`；主对话按兼容名 `session=popup` 与桌面 Web 共享历史 |
 | 消息 | `GET /api/notifications/pending`, `POST /api/notifications/sent` |
 | 认知通知 | `GET /api/cognition-updates/pending`, `POST /api/cognition-updates/seen` |
 | 活动流 | `GET /api/activity-feed` |
@@ -275,6 +275,6 @@ https://obc.example.com/m/
 
 打开 `/m/` 后可在 iOS Safari 通过「分享 → 添加到主屏幕」保存为桌面图标；Android Chrome / Chromium 浏览器可通过菜单里的「安装应用」或「添加到主屏幕」保存。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；完整 PWA 安装提示对 HTTPS 更稳定。
 
-不想手敲地址时有两个扫码入口：插件 popup / side panel 顶部的「手机版」胶囊按钮（品牌色带文字，点开二维码浮层），以及桌面 Web（`/web`）顶栏的「手机版」入口（点开抽屉，二维码由自包含的 `desktop/assets/js/mobile-qr.js` 生成）。当桌面页通过公网 / 局域网非 loopback 地址打开时，二维码保留当前页面的 scheme、host 和端口，因此 `https://obc.example.com/web` 会生成 `https://obc.example.com:443/m/`，不会替换为后端私网 IP 或退回 HTTP。只有页面仍是 loopback 时，桌面抽屉才调用轻量端点 `GET /api/qr-info` 并读取响应中的 `lan_ip` 字段；插件入口同样只在配置 host 为 loopback 时探测 LAN IP，并始终保留插件配置的 HTTP/HTTPS scheme。两个入口都在**每次打开时重新请求**该端点，端点自身也绕过 `/api/health` 的 30 秒 `lan_ip` TTL 实时探测：局域网地址会随换 Wi-Fi / 插拔网卡改变，任何一层缓存住都会让二维码继续编码手机已经打不开的旧地址。桌面侧仍保留首屏预取值，但只在这次请求失败时兜底使用，避免退化成 loopback 地址。
+不想手敲地址时，可使用桌面 Web（`/web`）顶栏的「手机版」入口；它会打开二维码抽屉，并由自包含的 `desktop/assets/js/mobile-qr.js` 生成二维码。当桌面页通过公网 / 局域网非 loopback 地址打开时，二维码保留当前页面的 scheme、host 和端口，因此 `https://obc.example.com/web` 会生成 `https://obc.example.com:443/m/`，不会替换为后端私网 IP 或退回 HTTP。只有页面仍是 loopback 时，桌面抽屉才调用轻量端点 `GET /api/qr-info` 并读取响应中的 `lan_ip` 字段。入口在**每次打开时重新请求**该端点，端点自身也绕过 `/api/health` 的 30 秒 `lan_ip` TTL 实时探测：局域网地址会随换 Wi-Fi / 插拔网卡改变，任何一层缓存住都会让二维码继续编码手机已经打不开的旧地址。桌面侧仍保留首屏预取值，但只在这次请求失败时兜底使用，避免退化成 loopback 地址。浏览器连接器不再内置二维码，只保留「打开主应用」。
 
 公网部署和认证步骤见 [`docs/https-deployment.md`](https-deployment.md)。

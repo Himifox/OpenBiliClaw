@@ -25,7 +25,7 @@ test("runtime stream connection gates concurrent async health probes", () => {
 
 test("service worker starts platform task polling during hot reload bootstrap", () => {
   const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
-  const bootstrapStart = source.indexOf("ensureFlushAlarm();", source.indexOf("chrome.notifications"));
+  const bootstrapStart = source.lastIndexOf("ensureFlushAlarm();");
   const bootstrapEnd = source.indexOf("onBackendEndpointChange", bootstrapStart);
   const bootstrapBlock = source.slice(bootstrapStart, bootstrapEnd);
 
@@ -65,7 +65,7 @@ test("background runtime stream passes an explicit short session", () => {
   assert.match(source, /clearSession\(\)\.then\(\(\) => connectRuntimeStream\(\)\)/);
 });
 
-test("background connector never acknowledges host-owned proactive delivery", () => {
+test("background connector never acknowledges invisible proactive delivery", () => {
   const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
   const handlerStart = source.indexOf("async function handleRuntimeEvent");
   const handlerEnd = source.indexOf("async function flushCapturedEventsForE2E", handlerStart);
@@ -76,7 +76,11 @@ test("background connector never acknowledges host-owned proactive delivery", ()
     assert.match(source, new RegExp(`"${eventType.replace(".", "\\.")}"`));
   }
   assert.match(handler, /HOST_OWNED_PROACTIVE_EVENTS\.has\(eventType\)/);
-  assert.doesNotMatch(source, /acknowledgeDelightSent|\/delight\/sent/);
+  assert.doesNotMatch(
+    source,
+    /acknowledgeDelightSent|checkPendingNotification|\/delight\/sent|\/notifications\/sent|\/cognition-updates\/seen/,
+  );
+  assert.doesNotMatch(source, /chrome\.notifications/);
 });
 
 test("service worker wires X polling, alarm, and immediate task wake", () => {

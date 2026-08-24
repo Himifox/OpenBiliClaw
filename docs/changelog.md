@@ -6,6 +6,8 @@
 
 ## 未发布
 
+- **浏览器连接器边界完成清理**：删除 background 对普通推荐通知和认知更新的后台轮询与静默确认，移除失效的 popup `recommend/profile/chat/delight` 深链、旧通知模块及 Chrome/Firefox `notifications` 权限。插件模块文档重写为当前连接器架构，并同步清除 README、架构、规格、隐私与来源接入指南中的旧 popup 推荐、聊天、画像、初始化和二维码说明。
+
 - **NEKO 成为主动搭话的唯一交付者**：轻量浏览器连接器收到
   `delight.candidate`、`interest.probe` 或 `avoidance.probe` 时只维持传输连接，不再调用
   `/api/delight/sent` 或把运行时事件冒充为用户可见交付。只有 NEKO 或其它真实可见客户端

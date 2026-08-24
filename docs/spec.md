@@ -235,7 +235,7 @@ Linux.do 同样纳入统一关键词 planner 的九平台目标与 `platform_gui
 ### 2.4 🔄 反馈学习系统 (Feedback Loop)
 
 - **隐式反馈**（浏览器插件自动采集）：是否点击、观看时长、是否收藏分享
-- **显式反馈**：在插件中点赞/踩、对话式反馈
+- **显式反馈**：在 NEKO、桌面或移动客户端中点赞/踩、对话式反馈
 - **桌面端提交屏障**：普通推荐与正向/避雷探针的非聊天动作先即时更新 UI，10 秒内可真实撤销且不写后端；超时或页面离开才提交，失败恢复原状态。评论/聊天因依赖文本语义与服务端回复保持直接提交
 - **记忆迭代**：反馈触发多层记忆网络更新——事件层记录事实，偏好层调整权重，觉察层写观察笔记，洞察层修正假设，灵魂层在必要时更新人格理解
 - **策略自省**：Agent 自我评估推荐命中率，反思发现策略和理解模型的有效性
@@ -468,7 +468,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │ 配置离线缓存 + 降级模式静态恢复 UI（/web /setup /m，保存后原地恢复）│   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ 手机版二维码：桌面/插件 -> 同 scheme /api/qr-info -> /m      │   │
+│  │ 移动入口：手机浏览器 -> 同 scheme /m（可选 /api/qr-info）      │   │
 │  │ 跳过 /api/health readiness / embedding probe                 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -488,7 +488,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │30天历史：click events + recommendations + saved_item_removals│ │
-│  │ -> /api/content-history 三分类分页 -> 插件/移动/桌面 lazy 封面 │ │
+│  │ -> /api/content-history 三分类分页 -> NEKO/移动/桌面 lazy 封面 │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ durable chat：session=popup（兼容名）-> 移动/桌面；主历史含 probe 聊天 │   │
@@ -498,13 +498,13 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │ 对话/反馈新增长期避雷 -> shared dislike purge -> purged_by_dislike │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ runtime status：available/raw/pending 库存 -> 插件/移动/桌面 │   │
+│  │ runtime status：available/raw/pending 库存 -> NEKO/移动/桌面 │   │
 │  │ 补池：available-by-source deficit + raw-material headroom     │   │
 │  │ 推荐消费池后：ServeResult 扣减快照 -> 精确异步复读 -> 三端收敛 │   │
 │  │ 桌面已有卡片后台恢复：跳过可能补池的推荐 GET，只同步库存状态 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ 画像编辑：编辑面板 -> /api/profile/edit -> 覆盖层（插件/移动/桌面三端） │ │
+│  │ 画像编辑：编辑面板 -> /api/profile/edit -> 覆盖层（NEKO/移动/桌面可见端）│ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 引导初始化：来源 + 前置清单 -> /api/init；微博以登录态 heartbeat + uid gate 后导入个人事件 │ │
@@ -570,7 +570,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │ trusted-local extension E2E exact auth -> single saved sync item -> six-field safe callback        │
 │  │ -> /api/sources/{xhs,dy,yt,x,zhihu,reddit}；unsupported_adapter_missing 可重试 │
 │  │ 微博 membership 仅本地：无 native adapter / 站内写回；个人事件使用独立同源只读任务 │
-│  │ -> 插件/桌面/移动 saved UI；CLI config-show（自动同步默认关闭）    │
+│  │ -> 桌面/移动 saved UI；插件只执行 durable 任务；CLI config-show   │
 │  │ NATIVE_SAVE_EXECUTE/RESULT：tab-launch mutex（XHS exact manual 可越过）+ per-task deadline + bounded replay │
 │  │ shared MV3 recovery barrier 在领取任务前清理全部 runner-owned orphan tabs       │
 │  │ final/source URL 与 tab/task/item 严格关联；Reddit/X/YT/XHS/DY/Zhihu 6/6 已接 │
@@ -729,7 +729,7 @@ localhost。两个入口互斥，默认 HTTP 不变。
 - [ ] 多层记忆架构基础版（事件层 + 偏好层 + 灵魂层）
 - [ ] 基础 Soul Engine：从行为数据中构建初步人格理解
 - [ ] 基础内容搜索与推荐
-- [ ] 插件内 UI：查看推荐、提供反馈、基础对话
+- [ ] 插件连接器 UI：连接状态、当前来源、身份同步和主应用入口
 - [ ] 多 LLM 支持框架
 
 ### v0.2 — 更深层的理解

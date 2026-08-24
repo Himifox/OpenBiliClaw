@@ -36,8 +36,8 @@
 | Setup surface | required | PASS | Shared status renderer + guided-init tests and final desktop settings artifact | None |
 | Desktop surface | required | PASS | Compact V2EX text-card/source-card tests and `desktop-recommend.png` / `desktop-settings.png` | Built-artifact fixture, not a forced mutation of the user's recommendation pool |
 | Mobile surface | required | PASS | Compact text-card/action tests and `mobile-recommend.png` | Built-artifact fixture |
-| Extension popup surface | required | PASS | Popup API/helper/source tests and `extension-recommend.png`; final installed build reconnected after hot reload | Built-artifact fixture |
-| Mobile credential management | N/A | PASS | Product-wide mobile credential editing is intentionally excluded; desktop/popup own optional PAT editing | None |
+| Extension connector surface | required | PASS | Source identity/readiness and task-runner tests; final installed build reconnected after hot reload | Historical recommendation screenshot no longer describes the connector UI |
+| Mobile credential management | N/A | PASS | Product-wide mobile credential editing is intentionally excluded; the desktop application owns optional PAT editing | None |
 | Image delivery | N/A | PASS | V2EX contract is an intentional no-cover text card; no image fallback is claimed | None |
 | Image proxy DNS / redirect / SSRF boundary | N/A | PASS | No V2EX image path is used | None |
 | Mobile deep link | N/A | PASS | Canonical HTTPS browser fallback only | None |
@@ -88,7 +88,7 @@ The static auditor reports `PASS=39`, `MISSING=0`, `N/A=10`, `MANUAL=12`, with c
 | Smoke projection boundary | required | PASS | snapshot runs 0 / projected events 0 / seen updates 0 / Affinity updates 0 | Latest `smoke_only` task completed in about 14 seconds; CLI total about 20 seconds |
 | Duplicate/retry/crash recovery | required | PASS | first canonical ingest 24/0; replay 0/24; staged result replay/ACK and stale lease recovery pass | Isolated projection plus task protocol tests |
 | Formal evaluator/admission | required | PASS | Node producer 3 discovered / 3 enqueued / 3 evaluated / 1 cached / 2 rejected low-score; 1 LLM usage row | Real V2EX request and user-configured `openai_compatible` LLM/Embedding; temporary DB removed on exit |
-| Built recommendation surfaces | required | PASS | Desktop, mobile and popup render compact no-cover V2EX cards with badge, Node, author, time, replies, summary and actions | Final build screenshots under `docs/images/chrome-web-store/source/` |
+| Built recommendation surfaces | required | PASS | Desktop and mobile render compact no-cover V2EX cards with badge, Node, author, time, replies, summary and actions; the extension exposes only connector status | Historical screenshots remain under `docs/images/chrome-web-store/source/` |
 | State-changing upstream action | N/A | PASS | 0 | V2EX client and task executor expose read-only operations only |
 
 - Credentials and private page bodies were not printed or persisted in the report.

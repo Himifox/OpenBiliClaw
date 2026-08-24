@@ -8,7 +8,7 @@ runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extr
 
 `recommendation/` 包负责把已经发现并评分过的内容，转成真正准备展示给用户的推荐结果。
 
-推荐卡与 delight 的收藏 / 稍后再看动作在插件 side panel、桌面 Web 与移动 Web 中统一保留 canonical `item_key/source_platform/content_id/content_url/content_type`，调用平台中立 `/api/saved/{list_kind}`。是否顺带创建原生同步任务只由后端 `[saved_sync].auto_sync_enabled` 判断，默认 `false`；前端不复制平台路由或自行绕过开关。URL fallback 保持空 `content_id`，不会把 recommendation row ID 或 namespaced legacy ID 当原始内容 ID，也不会把 X / 知乎文本强制写成 video。前端只对本地保存做 optimistic update；busy/version 状态按 `list_kind:item_key` 隔离，平台同步状态由保存列表和 durable task polling 展示，失败不撤销本地已保存态。插件与桌面 Web 的这些保存 toggle 在 coarse pointer 下提供至少 44×44 的触控目标，pressed tooltip / aria-label 与真实状态同步。
+推荐卡与 delight 的收藏 / 稍后再看动作由桌面 Web、移动 Web 与 NEKO 等可见宿主统一保留 canonical `item_key/source_platform/content_id/content_url/content_type`，调用平台中立 `/api/saved/{list_kind}`。是否创建原生同步任务只由后端 `[saved_sync].auto_sync_enabled` 判断，默认 `false`；前端不复制平台路由或绕过开关。浏览器连接器不渲染推荐卡，也不拥有这些反馈动作。
 
 当前模块包含：
 
@@ -20,7 +20,7 @@ runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extr
 
 `preview_semantic()` 与公开 copy-ready `preview()` 使用相同排序、去重、已展示、时效、
 不喜欢、链接和平台门禁，但前者不要求 `pool_expression`，也绝不生成文案。公开 Web、
-CLI、Popup 查询仍要求非空 copy，旧门禁没有全局放松。主动候选必须有当前评估版本、
+CLI 与 Web 查询仍要求非空 copy，旧门禁没有全局放松。主动候选必须有当前评估版本、
 独立内容质量分、相关性分、摘要可靠度分与完整时效证据；标题不再充当缺失摘要的
 兜底，摘要即使存在但 `summary_quality_score < 0.75` 也不能进入主动交接。
 
@@ -58,33 +58,33 @@ NEKO 内嵌维护不再追逐 300 条启动库存：30 是有效候选逻辑容�
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示；`recommendation.*` 的分类和短文案调用在未显式指定时统一用 `reasoning_effort=""`，避免 DeepSeek thinking 拉长文案回填 |
 | 6.3 推荐持久化 | ✅ | 推荐记录已补齐展示状态、结构化反馈字段和反馈更新时间 |
 | 候选排序统一 | ✅ | freshly discovered 与 cache backfill 现在共享同一套 tier / relevance / recency 排序口径 |
-| 9.1 反馈处理 | ✅ | CLI、本地 API、插件 popup 与移动 Web 已统一写回推荐反馈与 `feedback` 事件；推荐点击会携带 `content_id / content_url / source_platform`，跨源内容不会被记成 B 站点击；推荐反馈事件同样保留候选真实 `source_platform`，旧记录缺来源时兼容回退 `bilibili` |
+| 9.1 反馈处理 | ✅ | CLI、本地 API、桌面/移动 Web 与 NEKO 可见宿主统一写回推荐反馈与 `feedback` 事件；推荐点击携带 `content_id / content_url / source_platform`，跨源内容不会被记成 B 站点击 |
 | 9.2 画像更新 | ✅ | 反馈累计到阈值后会自动触发偏好层重分析与画像重建 |
-| Bangumi 目录卡片 | ✅ | 推荐与惊喜 DTO 透传 `rating_score / rating_count / source_rank`；桌面、移动与扩展统一显示评分、评分人数和排名，且不把目录评分冒充点赞/评论 |
+| Bangumi 目录卡片 | ✅ | 推荐与惊喜 DTO 透传 `rating_score / rating_count / source_rank`；桌面、移动与 NEKO 可见界面显示真实评分、人数和排名 |
 | 微博文字卡与真实互动 | ✅ | `source_platform="weibo"` / `content_type="post"` 使用无封面文字卡；DTO 透传真实 `reads_count → view_count`、点赞、评论和 `reposts_count → share_count`。没有 favorite / danmaku 字段时保持 0 并隐藏，不用热搜热度或转发数冒充阅读量 |
 | Issue #91 卡片反馈双轴匹配 | ✅ | 卡片 like/dislike 会在 Pool Curator 中同时匹配候选的细粒度 `topic_key` 与粗粒度 `topic_group`；任一轴命中即施加一次软调整，两轴同时命中不会重复加权 |
 | 体验优化：画像驱动“老B友”语气 | ✅ | 推荐文案不再固定套模板，而是根据画像 tone profile 调整信息密度、温度、梗感与直给程度；`style_key` 只影响内容切入角度，不再改写用户语气 |
-| M106 候选池即时换一批 | ✅ | `content_cache` 现已作为 discovery pool 使用，popup 可秒级从池子里换一批新推荐 |
-| M107 候选池容量与状态展示 | ✅ | runtime 会按 `pool_target_count` 持续补货，popup 会展示可换数量、最近补货数量和补货方向。`pool_target_count` 表示前端真实可换目标：`count_pool_candidates()` 达标后 refresh（含 force_refresh）返回 `pool_at_cap`，raw 素材库存允许高于目标并由独立 raw ceiling 控制 |
+| M106 候选池即时换一批 | ✅ | `content_cache` 作为 discovery pool，桌面/移动 Web 可秒级换一批新推荐 |
+| M107 候选池容量与状态展示 | ✅ | runtime 按 `pool_target_count` 持续补货，可见客户端展示可换数量、最近补货数量和方向；raw 素材库存由独立 ceiling 控制 |
 | M117 同批多样性约束 | ✅ | 同一批推荐不再只按分数直取前 N，而会对重复 topic 做限流，让一批里更容易同时出现不同方向 |
 | M118 topic_key 多样性强化 | ✅ | discovery pool 现在会持久化 `topic_key`，推荐层会优先按 `topic_key` 分桶再回填，减少同一 seed chain 或同类 query 连续刷屏 |
 | M119 风格多样性与快速文案增强 | ✅ | `reshuffle` 现在会同时约束 `topic_key + style_key`，并把快速 fallback 文案润色成更自然的老B友短句 |
 | M120 来源上限与硬配比 | ✅ | `reshuffle` 现在会对 `topic_key + style_key + source` 同时加硬上限，小批次优先保留不同来源，10 条一批时单一来源最多 3 条 |
-| M121 推荐自动续页 | ✅ | popup 与移动 Web 滚到底附近时会调用 `append` 从 discovery pool 再续 10 条，不再只能整组“换一批”；插件 / side panel 与移动 Web 的自动续页都需要用户向下滚动 / 翻页先触发一次意图门闩，后台和推荐消费后的 `refresh.pool_updated` 只刷新池子状态与可换提示，不会重拉 `/api/recommendations` 覆盖已 append 的历史卡片，也不会在加载更多哨兵仍可见时空转消耗候选池；底部「加载更多」按钮仍作为兜底，并会在插入追加卡片前预热封面 |
+| M121 推荐自动续页 | ✅ | 桌面与移动 Web 滚到底附近时调用 `append` 从 discovery pool 续页；必须由用户滚动/翻页触发意图门闩。后台 `refresh.pool_updated` 只刷新池状态，不重拉推荐或覆盖已追加卡片 |
 | PC Web 后台推荐读取边界 | ✅ | 桌面 Web 已有卡片时，切回标签页、配置应用或其它后台水合只同步 runtime / 库存状态并跳过 `/api/recommendations`；该 GET 在首屏历史较薄时可能触发 `serve()` 补池并消费候选，因此只有首屏空列表或用户明确手动刷新时才读取推荐快照。关闭“滚动到底自动加载推荐”后，滚动与后台状态刷新都不会消费候选池 |
 | PC Web 自动续页滚动稳定 | ✅ | 平台 Tab 即使在用户用滚轮 / 触控板浏览到列表底部后仍持有键盘焦点，续页完成重绘 Tab 库存徽标时也只恢复焦点、不把离屏 Tab 滚回视口；推荐卡增量追加、当前 `scrollY` 与键盘可达性同时保留。 |
 | Web 空失败态恢复 | ✅ | 移动与桌面 Web 会把推荐/库存读取失败与真实空结果分开：瞬时超时进入 1/2/4/8 秒、最多四次的单飞恢复；成功空数组终止推荐重试；`refresh.pool_updated` 只在当前列表仍为空且上次推荐读取失败时触发条件恢复，已有或追加卡片不会被覆盖。库存状态可由含 `pool_available_count` 的实时快照独立恢复，不再把未知状态渲染成零库存。 |
 | M122 来源优先补齐 | ✅ | 推荐选片时会先补齐不同 `source`，再限制重复 `style`，避免 `explore` 把 `search/trending` 挤出同一批结果 |
-| 平台定向推荐（PC Web） | ✅ | `serve / reshuffle / append`（含 `*_with_result`）新增默认空的 keyword-only `source_platform`。非空时只装载该 canonical 平台的候选、跳过跨平台保底补位，其余 curator 打分、amplification guard、embedding/MMR、topic/style/broad-topic 多样性、视觉加成、持久化与 shown 提交全部复用既有实现——平台作用域只缩小候选集合，绝不是"先生成混合批次再过滤结果"。返回前经 `_enforce_platform_scope()` 校验，发现跨平台行记 ERROR 并丢弃，不让泄漏进响应。省略该参数时调用形状与行为与引入前完全一致（对签名不确定的兼容对象也只在真的带平台时才传新关键字）。**仅 PC Web 有该交互**：移动 Web、扩展 popup / side panel 与 CLI 没有平台 Tab，继续走不带平台的兼容路径，行为不变 |
+| 平台定向推荐（PC Web） | ✅ | `serve / reshuffle / append` 支持可选 `source_platform`；非空时只装载该平台候选并在返回前执行 scope 校验。仅 PC Web 有平台 Tab，移动 Web、NEKO 与 CLI 继续走不带平台的兼容路径 |
 | 平台库存徽标（PC Web） | ✅ | `GET /api/recommendations/platform-availability` 返回 `{total_available, by_platform}`，来自 storage 的单次隔离快照，`total_available == sum(by_platform)` 恒成立，且与平台定向选片同一 servability 口径。读取失败返回可诊断 5xx，前端保留上一次成功快照，绝不把失败当成全零 |
 | 恢复标签页读取合并 | ✅ | `GET /api/recommendations` 使用最长 1 秒的进程内快照与 `asyncio.Lock` single-flight，把浏览器恢复几十个旧标签页时的同形昂贵历史读取合并为一次；桌面 Web 本地已有卡片时恢复水合直接跳过该 GET，仅同步 runtime / 库存，避免首屏补池副作用；空列表和明确刷新仍走读取。返回前逐行复核 temporal v2 三态，并把快照 deadline 截短到最早一条内容的 deadline 或 `next_review_at`。deadline 先锚定 monotonic clock、再读取 wall clock，两个时钟采样之间的调度延迟只会缩短缓存而不会越过 hold/expiry 边界；返回值 deep-copy，reshuffle / append / feedback 会立即失效快照。逐卡 `/api/saved/{list_kind}/status` 采用同窗口有界短缓存，并在 save/remove 时按 item 失效，不改变交互一致性。 |
 | M123 上游来源配额补货 | ✅ | discovery pool 低于目标值时，runtime 会按前端可换口径计算来源缺口，并用 raw-material headroom 限制请求量，减少推荐层长期面对“explore 过满、trending 过少”的偏池子 |
 | M124 generate 路径丰富度修正 | ✅ | `generate_recommendations()` 现在也会先对缓存候选做来源均衡，再分阶段放宽 `topic/style/source` 约束，避免高分 `related_chain` 长时间吃掉整批名额 |
 | M125 pool 预生成推荐文案 | ✅ | discovery pool 现在会异步批量预生成 `expression/topic_label`，`reshuffle/append` 只消费预生成结果，缺失时返回空而不是写统一兜底 |
 | M126 源无关内容分类 | ✅ | `classify_pool_backlog()` 在 `precompute_pool_copy` 前为 legacy / recovery 未分类内容补上 `style_key` / `topic_group` / `relevance_score`，并在批量评估 prompt 中带上近期 `negative_examples`。正常来源 ingest 已改为先走 `discovery_candidates` 统一评估，推荐层不再承担外站原始候选的首评估。COALESCE 保护已分类字段不被重复入库覆盖。`_diversity_tokens` 不再 fallback `source_strategy`——推荐层只看内容特征，来源完全透明。v0.3.162+：`_rows_to_discovered` 回读全部互动字段与 `author_name`，backlog 重写不再把 favorite/comment 等七个计数清零（往返保真有回归测试）。 |
-| M127 兴趣探针用户确认 | ✅ | WebSocket 推送 `interest.probe` → Chrome 通知 → popup 卡片（确认喜欢 / 暂时搁置 / 确认不喜欢 / 多聊聊）→ `POST /api/interest-probes/respond` → speculator confirm/defer/reject/chat。4h 去重冷却。推送从 `_run_refresh_plan` 移到 `run_forever` 主循环 |
-| M127b 避雷探针用户确认 | ✅ | WebSocket 推送 `avoidance.probe` → popup / Web / OpenClaw 卡片（确认避雷 / 搁置避雷 / 不是雷点 / 多聊聊）→ `POST /api/avoidance-probes/respond`；确认后写入 `disliked_topics` 并清理候选池，未确认时不参与过滤 |
-| Issue #147 聊聊口味 Markdown 回复 | ✅ | 主聊天和惊喜推荐 / 兴趣探针的内嵌聊天由共享安全 renderer 渲染 AI 回复中的常用 Markdown；三端支持加粗、斜体、列表、代码块、引用和安全 `http(s)` 链接，用户消息与不安全 HTML / URL 分别保持纯文本或被转义。 |
+| M127 兴趣探针用户确认 | ✅ | runtime stream 发布 `interest.probe`，NEKO 或其它真实可见宿主渲染确认卡后才调用 `POST /api/interest-probes/respond`；后台连接器接收事件不等于已展示，也不得确认消费 |
+| M127b 避雷探针用户确认 | ✅ | runtime stream 发布 `avoidance.probe`，可见宿主提供确认避雷 / 搁置 / 不是雷点 / 多聊聊；确认后才写入 `disliked_topics` 并清理候选池 |
+| Issue #147 聊聊口味 Markdown 回复 | ✅ | 主聊天和惊喜推荐 / 兴趣探针内聊由共享安全 renderer 渲染常用 Markdown；桌面、移动与 NEKO 可见界面保持相同安全边界 |
 | M128 CLI delight + probe | ✅ | `openbiliclaw delight` 手动查看惊喜推荐候选；`openbiliclaw probe` 手动列出猜测方向并交互确认/拒绝 |
 | 封面视觉加成（可选，需多模态 embedding） | ✅ | `[llm.embedding].multimodal_enabled` + 支持图像的 embedding 模型开启时，「封面↔画像兴趣锚点」跨模态余弦映射为**有界、只加不减**的加成（`_VISUAL_COVER_BONUS_MAX=0.05`），**两条推荐路径一致消费**:①惊喜推荐 `precompute_delight_scores()` 对已达阈值候选加到 `delight_score`（后台，冷未命中可现抓）；②正常推荐 `serve()` 排序把加成并入 relevance 项(`_ranking_key`/`score_override`/MMR `_relevance` 同步)——`serve()` 是延迟敏感热路径,**只读预热缓存、绝不现抓封面**(`allow_fetch=False`),warm 未命中就当轮不加成。兴趣锚点每次只 embed 一次。默认关闭时两条路径的打分/排序都与旧版**逐字节一致**(加成恒 0、不改变谁入选)。**旧内容处理**:开启多模态时,入池早于开关的老候选没有封面向量——`prewarm_pool_covers`(挂在 `prewarm_pool_mmr_embeddings` 上,refresh+启动触发)按池窗口回填封面向量(幂等、只补未热的);在回填完成前,`serve()` 有**公平门**——当批次里已热封面占比 < `_VISUAL_COVER_MIN_COVERAGE`(0.6)时整批不加成,避免"新内容仅因已预热而系统性压过旧内容"。delight 侧因逐条冷补不受影响。跨模态余弦 floor/ceil 已按真实部署数据标定（`_VISUAL_COVER_SIM_FLOOR/CEIL=0.35/0.48`，per-cover max anchor cosine 的 p50/p95，834 covers；换 embedding provider/模型后按 `scripts/calibrate_visual_thresholds.py` 重测，铁律 3） |
 | M129 惊喜候选自动预热与回填 | ✅ | delight 运行时统一使用动态阈值：默认底线 `0.75`，保守用户底线 `0.80`，copy-ready 候选池至少有 150 条已打 `delight_score` 且分布足够分散（总体标准差 ≥ `0.08`）时，才按 delight 分数池内 Top 10% 边界抬高阈值；`precompute_delight_scores()` 只读取 `pool_expression / pool_topic_label` 已同时生成的候选，再复用 Evo 的 `relevance_score` 生成 `delight_score`，不再额外调用 Delight LLM。条件写入会把正式文案原子同步为 `delight_reason / delight_hook`，未生成推荐词的内容不会拥有任何 delight 状态；evaluator 的 `relevance_reason` 或 topic 不能作兜底。后台会补齐新候选并修复旧版提前写入的 evaluator reason；`suppressed` 行可参与 copy-ready 回填，但不会作为 pending delight 发布 |
@@ -93,8 +93,8 @@ NEKO 内嵌维护不再追逐 300 条启动库存：30 是有效候选逻辑容�
 | 视频关键帧加成（P3，可选，需多模态 embedding） | ✅ | `[discovery].keyframe_enabled` + `[llm.embedding].multimodal_enabled` 同开时，**用真实视频画面而非封面**匹配共享视觉质心；只开 keyframe 也会触发质心构建，但 P1 cover bonus 仍受 `visual_profile_enabled` 控制。封面是 UP 主手选的营销图、常标题党，不代表内容；B 站已为每个视频预生成关键帧雪碧图（进度条悬停预览），`GET /x/player/videoshot`（**无需鉴权 / 无 WBI 签名**）即可拿到——**一次 61KB 请求 = 100 帧，无需下载视频、无需 ffmpeg**，与抓一张封面同级成本。实测 30 个真实视频（5 分区、45s–5106s）**覆盖率 100%**，平均 277 帧/视频。**两个实测驱动的实现要点**：①长视频返回**多张**雪碧图（实测最多 11 张 = 1100 帧），采样必须**跨全部雪碧图全局均匀分布**，只取 `image[0]` 会让长视频只覆盖开头；②单帧尺寸**不固定**（实测 160×90 与 480×270 并存），必须从响应读 `img_x_size`/`img_y_size`。帧向量取 **max-pool**（"是否有任一帧对味"比均值更适合召回），经 **margin 评分**映射为**有符号**加成（见下"margin 几何重设计"；与 P1 同一 margin/contested/cross-clean 几何，独立常量），独立常量 `_KEYFRAME_*`（`BOOST_MAX=0.05`/`SUPPRESS_MAX=0.04`/`MARGIN=0.05`/`CONTESTED=0.45`/`CONTESTED_MARGIN=0.10`/`NET_P95=0.093`/`NET_P5=-0.081`，keyframe-vs-centroid net 分布，**已实测标定**，99 真实精灵图帧；换 provider/模型后按 `scripts/prewarm_and_measure_keyframes.py` 重测，铁律 3）。缓存键 `keyframe_embedding_cache_key(bvid, frame_idx, sampling_signature, embedding_fingerprint)` 绑定采样算法 / `keyframe_max_frames` 与 embedding fingerprint；结果显式携带稳定 sampled-slot，部分 sprite/crop/task 成功也会缓存成功槽位但保持 `partial`/retryable，绝不把后续槽位重编号。预热 `prewarm_pool_keyframes` 复用已缓存槽位，只有确认 no_data，或采样完整且每个返回槽位 embedding 成功时才写 `keyframes_fetched_at`；部分 embedding / 网络 / 解析 / 精灵图失败留 NULL 下轮重试（铁律 2）。`serve()` 上与封面↔文本锚点、P1 视觉画像、P2 弹幕**四路并行叠加**进 `relevance_bonus`；热路径只读缓存、绝不现抓。默认关闭/无质心时加成恒 0，排序逐字节一致 |
 | margin 几何重设计（P1/P3 有符号评分） | ✅ | v0.3.185 的「去 neg 惩罚、纯正向」是对 neg 抵消问题的第一刀——直接砍掉 neg，安全但浪费了 neg 能说话的区域。本轮用几何方法把 neg 安全请回来，**取代纯正向也取代被搁置的 C 方案**（dislike 理由字段）。三点设计：①**聚类前 cross-cleaning**（`cross_clean_labels`，kNN k=3、`drop_margin=0.08`）剔除落在敌方势力范围的封面（misclick/love-hate 矛盾），绝不翻转极性；②**聚类后 contested 检测**（`contested_pairs`，cosine ≥ 0.45）标记 love-hate 区；③**打分时 margin 判定**：`s_pos − s_neg ≥ margin → boost`、`s_neg − s_pos ≥ margin → suppress`（负值）、`|net| < margin → gray`。一个差值自标定（s_pos/s_neg 共享同一 embedding/管线，差值无需单独 τ，0.80 教训的一般化）。contested 区**不静默而是抬高门槛 2×**（raise-don't-mute）——"质心重叠就整对灰掉"会丢掉 ~40% 的 P3 信号（39 个 clear win 被误杀），改成提高说服力门槛但保留 clear win。校准全部来自实测（`scripts/measure_visual_profile_geometry.py`，1366 候选）：2/6 pos×neg 质心对 contested（0.674/0.576 vs 0.377-0.219 有干净断点）、margin 0.05（net p75/p90 间）、boost/suppress scale 从 net p5/p95。实测：vp +107/−280、kf +4/−3（过粗灰门下 kf 0/−1）；方向验证 boost 的是 kigurumi/角色展示/MV。suppress 偏多是诚实读数：用户视觉上 dislike 多于 like。根因（反馈语义不分视觉维度）由几何方案处理，C 方案降级为未来 soul 层（非视觉 dislike 理由→回避 UP/topic）的解耦增强 |
 | 跨平台公平性归一化 | ✅ | 四路 bonus 在 `serve()` 叠加成 `combined_bonus` 后、喂给 MMR 选择器前，经 `_normalize_bonus_per_platform` 按 `source_platform` 分组，**以 0 为固定点做正负两侧分段对齐**：多平台时正值按平台内 positive max 对齐到所有平台当前观测到的全局正向最大值，负值按全局负向最大幅度对齐；全局目标受 `_COMBINED_BONUS_CAP` 限制。单平台保持原始绝对幅度（超 cap 时仍限幅），0 / 缺失保持 0，弱正不会变成负惩罚。这样 Bilibili-only 信号（P2 弹幕 / P3 关键帧）不会结构性抬高 Bilibili 候选，也不会凭空把小 bonus 放大到固定 cap；`snapshot_ranking.py` 镜像同一归一化，保证离线快照与 `serve()` 一致 |
-| 惊喜推荐反馈保留 | ✅ | `POST /api/delight/respond` 中 `like / chat` 记录正向学习信号并保留候选；`view` 当场保留卡片但标记已读（对齐推荐池 `shown` 语义，下次重灌不再出现）；`dislike / dismiss` 消费候选并驱动三端立即移除。`pending-batch` 重灌以 `include_liked=True` 保留已喜欢候选并下发 `state="liked"`；移动 Web、桌面 Web 与插件统一保留结果提示和完整动作组，只把 like 标为 `aria-pressed="true"` 并禁用重复提交，其它动作继续可用 |
-| 惊喜推荐反馈保留与永久叉掉 | ✅ | `POST /api/delight/respond` 中 `like / chat` 记录正向学习信号并保留候选；`view` 当场保留卡片但标记已读（对齐推荐池 `shown` 语义，下次重灌不再出现）；`dislike` 消费候选并记录负偏好；`dismiss` 是三端统一的“× / 看过了，不再推荐”，同时写 `delight_notified` 与 canonical `seen_items`，立即移出当前队列并永久排除普通/惊喜两条推荐出口。桌面 Web 的 × 独立放在卡片标题栏最右侧，不再混入喜欢 / 不感兴趣 / 稍后看 / 收藏反馈组；窄屏保留至少 44×44 的触控目标。`pending-batch` 重灌以 `include_liked=True` 保留已喜欢候选并下发 `state="liked"`；只把 like 标为 `aria-pressed="true"` 并禁用重复提交，用户仍可随后叉掉 |
+| 惊喜推荐反馈保留 | ✅ | `POST /api/delight/respond` 中 `like / chat` 记录正向学习信号并保留候选；`view` 标记已读；`dislike / dismiss` 消费候选。只有真实可见宿主在用户操作或成功展示后调用响应端点 |
+| 惊喜推荐反馈保留与永久叉掉 | ✅ | `dismiss` 同时写 `delight_notified` 与 canonical `seen_items`，立即退出当前队列并永久排除普通/惊喜出口；后台连接器不得代替用户或宿主执行该确认 |
 | 惊喜推送不打断输入（v0.3.157+） | ✅ | 桌面 Web：用户在惊喜卡聊天框互动中（composer 展开 / 输入框有焦点 / 有未发送草稿）时，`delight.candidate` 后台推送只静默入队并更新计数、不切当前卡（此前会 `setActiveDelight` 收起输入框，随后的发送还会把反馈串到换上来的新卡上）；`delight.refreshed` 队列刷新同样只同步数据，当前卡即使已被后端消费也保留引用，发送始终落在用户正对着的卡上；空闲时保持自动切到最新候选的原行为。无惊喜候选时 `renderDelightCover(null)` 只清空旧封面和背景后返回，不读取空候选或打断首页 hydration；有效但无封面的候选仍显示来源平台徽章。移动 Web：输入框聚焦时跳过推送触发的 DOM 重建（textarea 失焦 = 手机键盘收起），草稿本就实时存 state |
 | issue #79 桌面惊喜文字卡收尾 | ✅ | 桌面 Web 惊喜卡保留 `body_text` 并显示最多 5 行正文预览，仅在实际溢出时提供可访问的展开/收起；无封面或封面加载失败时，左侧媒体区以正文和来源徽章渲染毛玻璃文字卡。候选切换与空队列重置折叠态，不改变标题兜底、互动指标、聊天输入保护和反馈语义。 |
 | issue #126 移动惊喜卡整卡点击 | ✅ | 移动 Web 惊喜卡支持整卡点击打开内容，与下方信息流普通卡片一致；位移 <10px（`DELIGHT_DRAG_DEAD_ZONE`）视为点击，≥50px（`DELIGHT_SWIPE_THRESHOLD`）仍是左右切卡，中间区间不触发任何动作以防误触。反馈按钮 / 输入框在 `pointerdown` 阶段 stopPropagation，不会被整卡点击吸收；已反馈（`show_actions=false`）、聊天输入展开或无可用 URL 时不接管点击。桌面 Web 的普通卡片本就只有动作按钮、惊喜卡另有封面点击区，自身已一致，不在本次改动范围；插件无惊喜卡片，CLI 无此交互 |
@@ -105,22 +105,22 @@ NEKO 内嵌维护不再追逐 300 条启动库存：30 是有效候选逻辑容�
 | v0.3.1 SQL per-group 候选窗口 cap | ✅ | `get_pool_candidates` 用 `ROW_NUMBER() OVER (PARTITION BY topic_group)` 把候选窗口里每个 topic_group 限到 ≤3 条；600 池子 270 个 group 的长尾真正进入候选，distinct 主题数从 ~12-15 提升到 ~18-22 |
 | v0.3.44 MMR 多样化 | ✅ | `_select_diversified_batch` 引入 Maximum Marginal Relevance：`score = α*relevance - β*max_cos_to_picked`，靠 embedding 余弦把 LLM 误聚到同一 `topic_label` 伞标签下的硬核内容真正打散。每轮 unique_topics=10/10、top_topic_share≤10% |
 | v0.3.45 MMR embedding 提前 warm | ✅ | `warm_mmr_embeddings` 在 discovery 入池 + `classify_pool_backlog` 落库后立即并行 warm L2 SQLite embedding cache（cache key 文本由 `_mmr_embedding_text` 静态方法做 single source of truth），serve() 用 `asyncio.gather` 并行兜底,新增 `MMR embedding fetch: coverage=N/M elapsed=Xms` 埋点。换一批 P50 双峰（0.7s / 6-10s）收敛到稳定 <1s。v0.3.124+（lever 4）：冷启动伴侣 `prewarm_pool_mmr_embeddings()` 返回 `-1`＝没东西可暖(无 embedding service / 空池，良性)、`0`＝有候选但全嵌入失败(后端不可达)、`>0`＝已暖,供启动包装器区分良性冷启动与真故障 |
-| 换批默认硬去重 + 批次事件 | ✅ | 桌面 Web、移动 Web 与扩展 side panel 调用 `POST /api/recommendations/reshuffle` 时都会携带当前卡片 ID；桌面平台 Tab 还会排除该平台本会话已加载卡片。API/引擎把 `excluded_bvids` 贯穿到最终过滤，并把候选读取窗口扩大为基础窗口加排除数，避免旧卡因平台保底或 top-40 截断回流。成功换批只写一条 satisfaction-neutral、强度 `0.1` 的 `reshuffle` 批次事件，不再把整屏逐条伪装成 `dismiss`；误导性的“换一批时忽略当前”开关已移除。空响应或失败仍保留当前列表；CLI 是无持久卡片状态的单次输出，不适用列表保留语义。 |
+| 换批默认硬去重 + 批次事件 | ✅ | 桌面 Web、移动 Web 与 NEKO 等可见宿主调用 `POST /api/recommendations/reshuffle` 时都会携带当前卡片 ID；桌面平台 Tab 还会排除该平台本会话已加载卡片。API/引擎把 `excluded_bvids` 贯穿到最终过滤，并把候选读取窗口扩大为基础窗口加排除数，避免旧卡因平台保底或 top-40 截断回流。成功换批只写一条 satisfaction-neutral、强度 `0.1` 的 `reshuffle` 批次事件，不再把整屏逐条伪装成 `dismiss`；误导性的“换一批时忽略当前”开关已移除。空响应或失败仍保留当前列表；浏览器连接器与 CLI 均无持久推荐卡片状态。 |
 | issue #98 CPU 排序脱离事件循环 | ✅ | `_select_diversified_batch_async()` 与 `_build_supergroup_canonical_map_async()` 通过 `asyncio.to_thread()` 执行 MMR/多样性选择和 supergroup 两两 union-find；同步纯函数仍是唯一算法实现，异步包装保持完全相同的确定性输出。MMR 日志拆分 `selector_worker_ms` 与 `event_loop_resume_delay_ms`，不再把 worker 已完成后主协程迟迟未恢复的停顿误算成算法 CPU 时间。线程主要用于保持 asyncio 响应，不承诺绕过 Python GIL 提升吞吐。 |
 | issue #98 SQLite 换批热路径 | ✅ | `PoolServeSnapshot` 在独立 serve DB worker 上先把 temporal `review_due` 的 `fresh` 行转为 `temporal_review_hold`、把 `expired` 行转为 `stale`，再用短生命周期连接、单个读事务统一读取 readiness、候选窗口、平台补位、`seen_items` 和 curator 信号；两类行都不展示、不计 canonical 库存。API 不再前置重复扫描库存。推荐历史写入与 `pool_status='shown'` 在同一独立短事务中原子提交，并在事务内对最终选中行重读完整证据组，避免 snapshot→persist 竞态把刚到复审点或刚确定过期的内容返回给用户。它和后台 maintenance worker/连接彻底分离；读取、维护或精确状态收敛期间 `/api/ping` / runtime stream 仍可响应。`recommendation_request_timing` 记录 profile/snapshot/embedding/selector/resume/persist/total 阶段，详细候选与 MMR 摘要只在 DEBUG 输出；`scripts/benchmark_reshuffle_latency.py` 使用独立预热的 health 连接并发验证尾延迟，避免 HTTP/1 客户端连接池串行化污染结果。 |
-| v0.3.57 pool gate on precomputed copy | ✅ | `get_pool_candidates` / `count_pool_candidates` SQL 加 `AND COALESCE(pool_expression, '') != '' AND COALESCE(pool_topic_label, '') != ''` —— 未 precompute 的 row 对 serve() 不可见,消除"discovery 完成→precompute 完成"60–90s 窗口内 popup 显示占位模板的旧 bug。`engine.py:320` 的 `_fallback_expression` 路径变成 race-window 安全网,触发即 `logger.warning("Pool gate leak: ...")` |
+| v0.3.57 pool gate on precomputed copy | ✅ | `get_pool_candidates` / `count_pool_candidates` 要求非空 `pool_expression` 与 `pool_topic_label`，未完成预生成的行不会进入可见推荐结果 |
 | v0.3.66 pool gate on classification | ✅ | `get_pool_candidates` / `count_pool_candidates` 现在同样要求 `style_key` 与 `topic_group` 非空；`get_pool_candidates_needing_copy` 也只挑已分类但缺文案的候选，避免未分类跨源内容先生成 copy 后绕过 serve 分类口径 |
 | v0.3.91 servable pool count | ✅ | `count_pool_candidates()` 在读取前刷新 SQLite/WAL snapshot，并默认应用与 `get_pool_candidates()` 相同的 `max_per_topic_group=3` 候选窗口；新增 `count_pool_readiness()` 拆分 `available/raw/pending`；`serve()` 零候选 warning 会输出 `raw/servable/pending`，用于定位“池子有素材但暂不可换”的真实原因。 |
 | v0.3.102 空池热路径短路 | ✅ | 真实引擎的 `/api/recommendations/reshuffle` 与 `/api/recommendations/append` 不再做重复 API 库存预查，由 `PoolServeSnapshot` 一次判定；可用池为 0、或候选被 `excluded_bvids` / `seen_items` 过滤到 0 后立即返回空结果，跳过 curator、MMR embedding 和推荐历史写入，并按 30 秒 debounce 触发补货。旧 test double / adapter 没有 `*_with_result()` 时保留 API 前置短路兼容。 |
 | durable shown commit callback | ✅ | `serve_with_result()` 只在独立连接已原子提交 recommendation + shown 后返回 `ServeResult(items, pool_counts_after, timings)`，随后 detached 通知 `set_pool_inventory_commit_callback()` 注入的 sync/async hook。API 先用结果中的扣减库存更新 refill gate / 广播，不在响应关键路径重新扫描；再后台读取精确 canonical snapshot 收敛 topic-window 补位等近似差异。写失败不触发 callback，callback 自身失败只记录日志、不取消已完成提交。 |
-| v0.3.x PC Web 空推荐展示 | ✅ | 桌面 Web `/web` 不再携带内置演示推荐作为初始 `state.videos`；后端 `/api/recommendations` 返回空数组时必须覆盖并清空当前卡片，和插件 side panel 的空列表语义保持一致。 |
+| v0.3.x PC Web 空推荐展示 | ✅ | 桌面 Web `/web` 不再携带内置演示推荐作为初始 `state.videos`；后端 `/api/recommendations` 返回空数组时必须覆盖并清空当前卡片，并与移动 Web 的空列表语义保持一致。 |
 | v0.3.x available-target pool refill | ✅ | `count_pool_available_candidates_by_source()` 按 `count_pool_candidates()` 同口径统计各平台族的真实可换数量；`count_pool_raw_material_by_source()` 统计 fresh / 非 dislike / 未推荐 / 未看过的 raw material（含 `discovery_candidates` 待评估素材）用于 raw ceiling。补池不再因为 raw/linkable B 站库存达到 300 而停在前端 246 可换，raw trim 也不会在可换未达标时把库存压回 `pool_target_count`。 |
 | v0.3.x 统一 discovery 待评估池 | ✅ | 正常来源 ingest 不再直接写 `content_cache` 等推荐层分类；B 站 / XHS / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / Linux.do raw candidates 先进入 `discovery_candidates`，由 discovery pipeline 统一 batch 评估并 admission 到 `content_cache`。`classify_pool_backlog()` 只作为 legacy / recovery 路径处理已在 `content_cache` 中但缺分类的旧行。 |
 | 文字来源卡片 + body_text | ✅ | X 推文 / thread、知乎回答 / 文章 / 问题、Reddit post / comment 以 `body_text` 进入推荐池；前端在 `content_type` 为文字态或 `cover_url` 为空时渲染**无封面文字卡**（显示正文而非断图），franchise / diversity / MMR 对空 `cover_url` / `duration=0` 容错；推荐解释 / 评估 builder 的 user_prompt 带上 `body_text`，system prompt 仍保持字节静态（prompt-cache 约定），新 builder 已纳入不变量测试 |
 | v0.3.x 统一 discovery 待评估池 | ✅ | 正常来源 ingest 不再直接写 `content_cache` 等推荐层分类；B 站 / XHS / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / 微博 raw candidates 先进入 `discovery_candidates`，由 discovery pipeline 统一 batch 评估并 admission 到 `content_cache`。`classify_pool_backlog()` 只作为 legacy / recovery 路径处理已在 `content_cache` 中但缺分类的旧行。 |
 | 文字来源卡片 + body_text | ✅ | X 推文 / thread、知乎回答 / 文章 / 问题、Reddit post / comment、微博 post 以 `body_text` 进入推荐池；前端在 `content_type` 为文字态或 `cover_url` 为空时渲染**无封面文字卡**（显示正文而非断图），franchise / diversity / MMR 对空 `cover_url` / `duration=0` 容错；推荐解释 / 评估 builder 的 user_prompt 带上 `body_text`，system prompt 仍保持字节静态（prompt-cache 约定），新 builder 已纳入不变量测试 |
-| X append 文字形态保持 | ✅ | `append_recommendations()` 从 discovery pool row 还原候选时保留 `content_type/body_text`，避免 X tweet 在续页链路退回默认 `video` 并丢正文；真实浏览器 E2E 覆盖 PC Web、移动 Web 与扩展 side panel |
-| Canonical 保存身份 | ✅ | 推荐、append 与 delight 输出保留同一个 `item_key/source_platform/content_id/content_url/content_type`；插件、桌面和移动保存按钮把这五项交给平台中立 `/api/saved/*`。本地保存失败才回滚按钮；平台同步失败保留本地已保存态并展示逐项状态。 |
+| X append 文字形态保持 | ✅ | `append_recommendations()` 从 discovery pool row 还原候选时保留 `content_type/body_text`，避免 X tweet 在续页链路退回默认 `video` 并丢正文；真实浏览器 E2E 覆盖 PC Web 与移动 Web |
+| Canonical 保存身份 | ✅ | 推荐、append 与 delight 输出保留同一个 `item_key/source_platform/content_id/content_url/content_type`；桌面、移动和 NEKO 等可见宿主的保存按钮把这五项交给平台中立 `/api/saved/*`。本地保存失败才回滚按钮；平台同步失败保留本地已保存态并展示逐项状态。浏览器连接器只执行后端派发的原生保存任务。 |
 | v0.3.91 新兴趣放大保护 | ✅ | 新确认兴趣会生成 amplification key，`PoolCurator` 用最近 24h 推荐历史计算滚动占比，超过 25% 的方向会被降权；最终批量选择还会硬限制同一新方向最多 `max(1, floor(limit * 0.25))` 条，避免刚确认的兴趣短期刷屏 |
 | v0.3.91 推荐读取索引 | ✅ | `recommendations(created_at, id)`、`recommendations(bvid)`、`events(event_type, id)`、`seen_items(source_platform, content_id)` 与 `content_cache(content_id)` 在数据库初始化时自动创建索引；推荐列表 / activity feed、候选池 `NOT EXISTS` 历史排除和已看账本读取不再退化为事件全表扫描。 |
 | v0.3.x 统一 admission 分数防线 | ✅ | `get_pool_candidates()` / `count_pool_candidates()` / `/api/recommendations` 历史读取都会过滤低于 `[discovery].admission_min_score` 的内容；旧低分推荐会标记为 `suppressed_low_score`，防止 observed / 插件来源脏数据继续展示。 |
@@ -218,7 +218,7 @@ zhihu_only = await engine.reshuffle_recommendations(
 
 - 直接从 `content_cache` discovery pool 里挑选 `fresh` 候选，不等待新一轮 discover 完成
 - `excluded_bvids` 是本次换批前仍可见的内容 ID；HTTP 入口接受可选 JSON `{"excluded_bvids": [...]}`，缺省或无 body 时等价于空列表，并会去空白、去重后传入引擎
-- 桌面 Web、移动 Web 和扩展 side panel 默认都会提交当前卡片作为排除集；这是换批本身的硬去重语义，不再由用户开关控制
+- 桌面 Web、移动 Web 和 NEKO 等可见宿主默认都会提交当前卡片作为排除集；这是换批本身的硬去重语义，不再由用户开关控制
 - `source_platform` 是可选 additive 平台作用域，HTTP 入口同名字段接受别名（`xhs` → `xiaohongshu`）并在 Pydantic 边界 canonical 化；未知平台返回 422，绝不静默回退到"全部"或 B 站。省略或空字符串保持旧行为，旧客户端不受影响
 - 平台作用域只缩小候选集合：跳过跨平台保底补位，其余排序、多样性、文案读取、推荐历史写入与 shown 消费全部与"全部"路径共用同一实现
 - 候选读取窗口会额外加上排除项数量，平台保底补入候选后还会执行一次最终排除，确保旧卡不会被补回新批次
@@ -259,7 +259,7 @@ items = await engine.append_recommendations(
 
 行为说明：
 
-- 用于 popup 和移动 Web 推荐流的续页，不会清空当前列表
+- 用于桌面与移动 Web 推荐流的续页，不会清空当前列表
 - PC Web 使用同一 `append` 契约并在续页完成后更新平台库存 Tab；若焦点仍停在已经离屏的 Tab，DOM 重绘只恢复键盘焦点而不改变当前滚动位置
 - 会先排除前端已经展示过的 `excluded_bvids`
 - 若 API 看到 `pool_available_count=0`，会立即返回 `items=[]` 并按 30 秒 debounce 触发一次后台补货；不会读取画像或进入推荐引擎
@@ -310,8 +310,8 @@ count = await engine.precompute_pool_copy(
 - 批量文案并发由 `_expression_lock + expression_batch_concurrency(default=2)` 控制：多入口不会抢同一批候选，同一次 drain 内也只会有两个文案 batch 同时打 LLM；拆半重试在 worker 内串行执行，不额外创建嵌套并发任务
 - `copy_ready_target_count > 0` 时，每次 drain 都在 expression lock 内按 `max(copy_ready 水位缺口, min(公开 available 缺口, admitted_pending_available))` 重新钳制领取量，并先领取补齐后能进入 topic 展示窗口的行；只有 copy-ready 水位本身不足时才继续领取深层 backlog。API、CLI 和 OpenClaw 在构造引擎时同时注入钳制后的 copy 水位与 `pool_target_count`。`copy_ready_target_count = 0` 保留旧版排空全部 pending backlog 的显式回滚语义
 - 成功后把结果回写到 `content_cache.pool_expression / content_cache.pool_topic_label`
-- 生成失败时不会写 profile 级统一 fallback，而是保留空值，交给 popup 隐藏
-- runtime refresh 会在补货后自动触发这一步，避免 popup 的“换一批 / 继续追加”现场等待 LLM
+- 生成失败时不会写 profile 级统一 fallback，而是保留空值，由可见客户端隐藏
+- runtime refresh 会在补货后自动触发这一步，避免用户“换一批 / 继续追加”时现场等待 LLM
 - 即使当前没有普通推荐文案要补，runtime 启动时也会走一次 `limit=0` 的预热路径：delight scorer 只领取正式推荐文案已就绪的候选，并把达到门槛的行同步成可推送候选
 - v0.3.124+（lever 2b）：文案生成逻辑抽到 copy-only 的 `_drain_expression_copy()`（不 spawn classify / delight，避免递归）；`precompute_pool_copy` 复用它（对外行为不变），而 `_safe_classify_pool_backlog`（detached classify 包装）在 classify 出新条目后会**当场 await 一次 `_drain_expression_copy`**——刚分类好的候选在同一周期就补上文案、立刻可服务，不必等下一个 60s 刷新 tick；共享 `_expression_lock` 串行化两条路径，杜绝重复花 token
 
@@ -380,7 +380,7 @@ Recommendation(
 
 ### 文字卡渲染（X / 知乎 / Reddit / 微博 / 无封面内容）
 
-X、知乎、Reddit 和微博都可能返回没有封面、主要价值在正文里的候选。推荐卡前端（移动 Web `/m`、桌面 Web `/web`、扩展 side panel）在 `content_type ∈ {tweet, thread, answer, article, question, post, comment}`（或 `cover_url` 为空）时渲染**无封面文字卡**：显示 `body_text` / `title` 主体，而不是断图缩略图。`RecommendationEngine` 的 franchise / diversity / MMR 逻辑对文字内容做了容错（`cover_url` 空、`duration` 0 不报错）。LLM 侧，推荐解释 / 评估 builder 的 **user_prompt** 会带上 `body_text`（纯文字内容标题信息量低，正文才是判断依据）；严守 prompt-cache 约定——system prompt 保持字节静态，`body_text` 等 per-call 变量只进 user message，`json.dumps(..., ensure_ascii=False, indent=2, sort_keys=True)` 确定性序列化，新 builder 已纳入 `test_prompt_builder_system_messages_are_call_invariant`。
+X、知乎、Reddit 和微博都可能返回没有封面、主要价值在正文里的候选。推荐卡前端（移动 Web `/m`、桌面 Web `/web`，以及复用同一 DTO 的可见宿主）在 `content_type ∈ {tweet, thread, answer, article, question, post, comment}`（或 `cover_url` 为空）时渲染**无封面文字卡**：显示 `body_text` / `title` 主体，而不是断图缩略图。`RecommendationEngine` 的 franchise / diversity / MMR 逻辑对文字内容做了容错（`cover_url` 空、`duration` 0 不报错）。LLM 侧，推荐解释 / 评估 builder 的 **user_prompt** 会带上 `body_text`（纯文字内容标题信息量低，正文才是判断依据）；严守 prompt-cache 约定——system prompt 保持字节静态，`body_text` 等 per-call 变量只进 user message，`json.dumps(..., ensure_ascii=False, indent=2, sort_keys=True)` 确定性序列化，新 builder 已纳入 `test_prompt_builder_system_messages_are_call_invariant`。
 
 ### Recommendation Click API
 
@@ -432,15 +432,15 @@ Content-Type: application/json
 
 - CLI：`openbiliclaw feedback <id> <like|dislike|comment|dismiss> [--note ...]`
 - API：`POST /api/feedback`
-- 插件 popup：卡片上的 `喜欢` / `不喜欢` / `写一句`
+- NEKO 等可见宿主：对应的喜欢 / 不喜欢 / 补充说明动作
 - 桌面 Web：推荐卡片底部「喜欢 / 不感兴趣 / 忽略」三连按钮，「忽略」走 `dismiss` 通道
 - 移动 Web：推荐卡片反馈与惊喜推荐「喜欢 / 不感兴趣」共用后端反馈语义，惊喜推荐直接写入 `/api/delight/respond`
 
 ### Delight Feedback
 
-`POST /api/delight/respond` 支持 `view / like / dislike / chat / dismiss`。`like / chat` 只记录喜欢或对话学习信号，候选保留在队列里；`view`（看看/点开浏览）保留当场卡片的「已打开」展示，但会把候选标记为已读（`delight_notified=1`，不重置 4 小时主动推送冷却）——语义对齐推荐池的 `pool_status='shown'`：浏览过的惊喜在下次队列重灌时不再出现；`dislike` 立即移除并记录负偏好；`dismiss` 对应移动、桌面和扩展统一的“× / 看过了，不再推荐”，先把内容 canonical identity 写入 `seen_items`，再置 `delight_notified=1`，因此后续普通推荐与惊喜推荐都硬排除。
+`POST /api/delight/respond` 支持 `view / like / dislike / chat / dismiss`。`like / chat` 记录学习信号并保留候选；`view` 只在可见客户端实际打开后标记已读；`dislike` 立即移除并记录负偏好；`dismiss` 先把 canonical identity 写入 `seen_items`，再置 `delight_notified=1`。浏览器连接器没有对应 UI，不得代替可见宿主调用这些确认动作。
 
-正向保留跨重灌生效：`GET /api/delight/pending-batch` 以 `include_liked=True` 调用 `get_delight_candidates`，已点喜欢（`feedback_type='like'`）的候选在 popup 重开 / `delight.refreshed` 重灌后仍保留队列位置，并以 `state="liked"` 下发供三端恢复「已喜欢」展示；`view` / `dismiss` / `dislike`（置 `delight_notified=1`）会让候选退出重灌队列。所有 delight scoring、动态阈值、计数与 pending 查询还统一叠加 `seen_items` guard，外部浏览、点赞、收藏或投币已经进入已看账本的内容不会占据惊喜栏位。WS 主动推送（`get_pending_delight`）、候选计数与 CLI 仍排除已喜欢项，避免把喜欢过的内容当新惊喜重复推送。
+正向保留跨重灌生效：`GET /api/delight/pending-batch` 以 `include_liked=True` 调用 `get_delight_candidates`，已喜欢候选继续保留并以下发的 `state="liked"` 恢复展示；`view / dismiss / dislike` 会让候选退出队列。所有 delight scoring、动态阈值、计数与 pending 查询统一叠加 `seen_items` guard，避免把已经看过或喜欢过的内容当新惊喜重复推送。
 
 图形端把结果提示、动作组和 like 的可访问状态分开投影；`handled` 只保留为 `viewed / rejected` 的兼容终态标记，不再用来隐藏 liked 的动作组：
 
@@ -639,12 +639,12 @@ report: PoolHealthReport = curator.check_pool_health()
 3. **表达生成单独落库**：排序和表达拆开，便于失败时降级到 fallback 文案
 4. **`presented` 在 CLI 展示后更新**：区分“系统选中”和“用户已经看见”
 5. **反馈保留当前状态**：v0.1 只保存当前反馈结果，不额外引入 feedback 历史表
-6. **三端走同一反馈语义**：CLI、API 和 popup 都只写入当前反馈状态，并同步追加 `feedback` 事件
+6. **所有可见入口走同一反馈语义**：CLI、API、桌面/移动 Web 与 NEKO 都写入同一反馈状态，并同步追加 `feedback` 事件
 7. **先平衡候选，再放宽约束**：优先通过来源均衡和分阶段回填守住一批内容的丰富度，而不是靠最后一步无条件补满
 8. **单卡与主题分层**：推荐反馈不会逐条推断整个主题；卡片身份同步隐藏，累计证据确认主题后再立即应用到所有推荐输出，降低误杀
 9. **推荐语气跟着用户而不是内容类型变**：表达风格会根据画像和近期反馈推断 `ToneProfile`，但不会因为某条内容是轻聊天、日常或审美浏览就自动把语气调轻；`style_key` 只影响推荐理由的切入角度，避免同一个助手在不同内容之间人格漂移。
 10. **缓存候选不能退化成只看播放量**：一旦从 `content_cache` 回读候选，也必须恢复 `relevance_score`、`candidate_tier` 和时间字段，保持与实时发现同一排序标准
-11. **候选池先可展示，再做文案增强**：`discover` 入池时就要带 `relevance_reason`，popup “换一批”先秒级从池子里出片，`expression` 只是增强层，不再阻塞展示
+11. **候选池先可展示，再做文案增强**：`discover` 入池时带 `relevance_reason`，可见客户端“换一批”可先从池子出片，`expression` 是增强层
 12. **同批推荐需要显式做多样性约束**：高分不是唯一目标，排序后仍要对重复 topic/tag 做软限流，避免一批里全是同一类内容
 13. **多样性要优先吃稳定 topic_key**：只靠 `tags` 不够稳，推荐层现在会优先使用 discovery 入池时生成的 `topic_key` 做分桶，再退回 `tags`
 14. **topic 多样性还不够，要再控风格**：用户体感里的”全是很干很学术”往往不是同一 topic，而是同一种内容风格，所以 `reshuffle` 现在会同时约束 `style_key`

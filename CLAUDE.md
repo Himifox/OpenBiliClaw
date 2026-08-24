@@ -80,7 +80,7 @@ The system follows a pipeline: **Behavioral Data -> Soul Engine -> Discovery -> 
 
 ### Extension <-> Backend Flow
 
-The Chrome extension (`extension/`) captures user behavior on bilibili.com pages via content script (`content/collector.ts`), buffers events in the service worker (`background/service-worker.ts`), and sends them to the FastAPI backend at `http://127.0.0.1:8420`. The popup/side panel (`popup/`) displays recommendations fetched from the same backend.
+The browser extension (`extension/`) captures supported-site behavior through the content kernel, durably buffers events in the service worker, synchronizes browser identity, and executes bounded browser tasks. Its popup/side panel is only a compact connector for backend status, current-source identity, and opening `/web`; recommendations, profile, chat, init, and full settings live in NEKO/Desktop/Mobile hosts. Background receipt is never proof of visible proactive delivery.
 
 ## Configuration
 

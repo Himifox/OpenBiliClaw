@@ -14,9 +14,9 @@
 | 公开收藏初始化 | ✅ | 仅在用户显式提供公开用户名后读取 `GET /v0/users/{username}/collections`；可作为唯一画像来源 |
 | 个人令牌认证 | ✅ | 可选 `access_token`（https://next.bgm.tv/demo/access-token 生成，约 1 年有效）；`GET /v0/me` 自动识别用户名，收藏读取带 Bearer 并包含本人私密收藏；无令牌时行为与匿名路径完全一致 |
 | 令牌过期降级 | ✅ | 同步/发现期收到 401/403 → `unauthorized` 错误码；producer 记 WARNING（不打印令牌）并降级为匿名公开发现；init 阶段返回 `invalid_token` 状态并给出重新生成指引 |
-| 拒绝状态持久化并可见 | ✅ | 401/403 降级时把拒绝标记持久化到 `bangumi_discovery_state`（`state_key='token_rejected'`，`note` 存令牌 SHA-256 前 12 位指纹 + ISO 时间戳，**绝不存令牌本身**）；重启后配置仍有该令牌且指纹未变 → 直接走匿名不再重复吃 401；令牌变化（指纹不同）→ 先试新令牌，成功即清标记，再 401 则按新指纹重记。`/api/sources/status` 增加 `token_state`（`ok`/`rejected`/未配置缺省），rejected 时 detail 明写"个人令牌已被拒绝（可能过期）…请重新生成"，桌面 Web 与扩展 popup 状态区渲染警示（红点/"令牌已失效"），凭据卡 detail 追加失效提示 |
+| 拒绝状态持久化并可见 | ✅ | 401/403 时持久化令牌指纹而非令牌值；`/api/sources/status.token_state` 由桌面 Web 设置页渲染失效提示，连接器不编辑令牌 |
 | 设置页保存 /v0/me 校验 | ✅ | `PUT /api/config` 收到**新的非 masked 非空** `access_token` 时镜像 init 语义经 `resolve_access_token_identity`(`/v0/me`) 校验：401 → HTTP 400 `invalid_bangumi_access_token`，网络/上游失败 → 502 `bangumi_token_check_failed`，绝不静默接受坏令牌；校验通过才写入令牌 + `/v0/me` 用户名并清除拒绝标记。masked echo / 省略 key / 其它配置保存零网络 |
-| 清除令牌入口 | ✅ | 桌面设置页与扩展 popup 设置页各有「清除已保存的令牌」勾选控件，勾选后本次保存显式发送 `access_token:""` → 后端清空令牌并清除拒绝标记，GET `access_token_set` 变 `false`；不破坏"留空=保持不变"语义 |
+| 清除令牌入口 | ✅ | 桌面设置页提供「清除已保存的令牌」控件；连接器不保存或编辑个人令牌 |
 | 未启用时的凭据可见性 | ✅ | 存了令牌 / 公开用户名却没开启用开关时，`/api/sources/status` 的 `disabled` 分支照样下发 `token_state`，`detail` 点名已存的凭据、说明它当前不会被使用并给出唯一剩余步骤（取值表见下文状态一节）；`state` 仍是 `disabled`，只有 `token_state=rejected` 才走红色警示 |
 | 扩展自动识别 | ✅ | 浏览器扩展在 bgm.tv/bangumi.tv 上读取公开的 `CHOBITS_UID`（MAIN-world 桥）+ 导航栏 `/user/<username>` 链接，上报 `POST /api/sources/bangumi/identity` 持久化；guided init/CLI 在既无令牌又无显式用户名时自动回退使用；只采集 uid+username（公开信息），不碰 Cookie，不采集浏览行为 |
 | 统一候选池 | ✅ | Subject 归一化后只进入 `discovery_candidates`，由共享 evaluator/admission 决定是否进入 `content_cache` |
@@ -147,12 +147,12 @@ bangumi = 1
 | 仅公开用户名 | `disabled` | `""` | 同上，把「个人令牌」换成「公开用户名」 |
 | 个人令牌（已被拒） | `disabled` | `rejected` | 指向 https://next.bgm.tv/demo/access-token 重新生成，并提醒同时启用 |
 
-令牌与用户名同时配置时以令牌为准（账号由 `/v0/me` 决定）。`state` 保持 `disabled` 不变——它跟踪的是发现运行状况而非认证状态——所以桌面 Web 与扩展 popup 仍按中性灰渲染"来源未启用"，只有 `token_state=rejected` 才触发既有的红色「令牌已失效」；待启用不是出错。这些 `detail` **刻意不含"未启用"三字**：两个渲染器都会自己前置状态标签（popup 还额外加 `(未启用)` 前缀），后端再写一遍会让同一行出现三次。两端逐字渲染后端 `detail`，因此本项无前端改动。
+令牌与用户名同时配置时以令牌解析的账号为准。`state` 跟踪发现运行状况，`token_state` 单独表示认证状态；桌面 Web 负责渲染，连接器只显示公开身份同步结果。
 
 桌面 Web 与扩展设置页都列出官方五种合法条目类型：动画、书籍、游戏、音乐和三次元；默认仍只勾选 `anime/book/game`。保存已有 `music/real` 配置时不会因界面缺少控件而静默丢失。
 
 <!-- 锚点 #获取-bangumi-个人令牌 被三个 GUI 面的「取令牌步骤」链接引用
-     （setup 引导页 / 桌面 Web 设置页与初始化面板 / 扩展 popup 设置页与初始化面板）。
+     （setup 引导页 / 桌面 Web 设置页与初始化面板）。
      改这个标题前先改那些链接，tests/test_bangumi_web_surfaces.py 会检查两边一致。 -->
 
 ## 获取 Bangumi 个人令牌
@@ -173,14 +173,14 @@ Bangumi 账号有三条路，**三选一**即可，UI 上的取舍说明与这�
 2. 打开 <https://next.bgm.tv/demo/access-token>。
 3. 在该页面创建一个新的 access token；有名称/备注一类的字段时随便填一个能认出用途的即可（例如 `OpenBiliClaw`）。
 4. 复制生成出来的令牌字符串。**它只在生成时完整显示一次**，先粘贴到安全的地方。
-5. 回到 OpenBiliClaw，粘进任一入口的「个人令牌」输入框并保存：初始化引导页、桌面 Web 设置 → Bangumi、扩展 popup 设置 → Bangumi。
+5. 回到 OpenBiliClaw，在初始化引导页或桌面 Web 设置页粘贴个人令牌并保存。
 
 ### 有效期与失效表现
 
 - 官方签发的令牌**约 1 年有效**。
 - 令牌**视同密码**：它能读你的私密收藏，不要外传、不要贴进 issue 或截图。本地写入 `config.toml`（已被 gitignore），日志只记录存在与否和长度，不记录明文。
 - 保存时后端会先用 `/v0/me` 实测一次：令牌错误或已过期会**当场拒绝**并回传真实原因，不会静默存下一个用不了的值。
-- 已保存的令牌在后续使用中被 bgm.tv 拒绝（401/403）时，发现链路会自动降级为匿名公开路径继续工作，同时把拒绝状态持久化：`GET /api/sources/status` 的 `token_state` 变为 `rejected`，桌面 Web 与扩展 popup 的 Bangumi 状态区显示「令牌已失效」。此时重新生成一个令牌填进去即可，成功后拒绝标记自动清除。
+- 已保存的令牌被拒绝时，发现链路降级到匿名公开路径，桌面 Web 的 Bangumi 状态区显示「令牌已失效」。
 - 想彻底不用令牌：勾选设置页的「清除已保存的令牌」保存一次，会清空令牌并降级为匿名公开发现。
 
 
@@ -205,7 +205,7 @@ openbiliclaw discover-bangumi-latest --limit 10
 openbiliclaw discover --source bangumi --limit 30
 ```
 
-`fetch-bangumi --write-memory` 才会写本地事件；`--rebuild-profile` 还会真实调用配置中的 LLM，并隐含要求写 memory。`fetch-bangumi --token`（缺省读 `[sources.bangumi].access_token`）优先于用户名：命中令牌即经 `/v0/me` 解析账号并读含私密收藏；两者皆缺时报错提示"提供 --token（推荐）或 --username"。guided init 若只选择 Bangumi，则必须提供 `--bangumi-token`（推荐，自动识别当前用户）或 `--bangumi-username`（公开用户名）；令牌在持久化前先经 `/v0/me` 校验，被拒绝（401）当场退出并指引重新生成；显式用户名与 `/v0/me` 不一致时以 `/v0/me` 为准并提示。校验通过的令牌与解析出的用户名写入 config，供后台周期发现与下次 init 复用；同步期令牌过期（401）则记 WARNING 并降级到匿名公开路径。API 侧 `source_options.bangumi` 白名单为 `{username, access_token}`；`access_token` 显式出现且非空时以本轮值为准（token 缺省时回退已配置令牌）。若与其它画像来源混用而用户名为空，Bangumi 仅参与后续 discovery，并返回明确 warning。`source_options.bangumi.username` 显式出现时以本轮值为准，包括空字符串；只有字段缺失的旧客户端才回退已保存用户名。扩展 popup、桌面 Web 与打包 setup 三端据此约定：仅当用户手动编辑、或在成功 prefill 后显式清空该字段时才发送 `username`（清空即发送 `""` 覆盖配置）；prefill 失败/未完成或字段从未被触碰时省略该字段，避免用空值误删已配置用户名。三端还会读取 `/api/init` 202 响应里的 `warnings` 并按现有状态/提示样式安全渲染（如未填公开用户名的 discovery-only 提示），不再静默丢弃。`fetch_bangumi_public_collection_events` 对正常 bootstrap 按 50 行请求，较小的全局 `limit` 则不超过目标量，并把富余行按 lane 缓存复用；仍以 `per_pair` 公平份额、去重、限速、终止与不过量导入为界，用较大的缓冲分页替代大量小页。显式 `discover --source bangumi` 仍要求来源自身启用，但不受后台 `[scheduler].enabled` 总开关限制；该总开关只控制 daemon-owned 调度。
+`fetch-bangumi --write-memory` 才会写本地事件；`--rebuild-profile` 还会调用配置中的 LLM。token 优先于公开用户名并在持久化前经 `/v0/me` 校验。API 的 `source_options.bangumi` 接受 `{username, access_token}`；桌面 Web 与 `/setup/` 只在用户实际编辑时发送字段，避免空值误删旧配置，并渲染 `/api/init` 返回的 warning。浏览器插件只上报公开 uid/用户名，不发送、保存或编辑个人令牌。
 
 ## 安全边界
 
@@ -217,7 +217,7 @@ openbiliclaw discover --source bangumi --limit 30
 
 ## 前端表面
 
-扩展 popup、桌面 Web 与打包 setup 三个 GUI init 面板都提供可选"个人令牌"输入（password 型，附生成链接 https://next.bgm.tv/demo/access-token），仅在用户输入时发送 `source_options.bangumi.access_token`（留空即省略，保留已配置令牌），并映射 `invalid_bangumi_access_token` / `bangumi_token_check_failed` 错误文案。加上 CLI 的 `--bangumi-token`，令牌通道满足完整 four-surface 契约，无排除项。
+桌面 Web 与打包 setup 提供可选个人令牌输入，仅在用户输入时发送 `source_options.bangumi.access_token`；CLI 使用 `--bangumi-token`。插件只自动识别公开 uid/用户名，不接触令牌。
 
 ### 扩展自动识别通道（零配置主推路径）
 
@@ -249,7 +249,7 @@ openbiliclaw discover --source bangumi --limit 30
 
 guided init 与 CLI init 的用户名解析按优先级取值：**令牌 `/v0/me` > 显式/已配置用户名 > 扩展上报用户名 > 报错**；命中扩展身份时在 202 warnings/CLI 输出中明示来源，且**按 `verified` 分叉文案**——已校验保持"Bangumi 使用浏览器扩展识别到的账号 X。"，未校验则追加"（未经 bgm.tv 校验，可能不准）"并给出改用用户名/令牌的出路，避免把一次没跑成的校验说成既成事实。
 
-**准入判定只由后端做**：packaged setup、桌面 Web 与扩展 popup 曾各自带一份前端前置判断（"仅选 Bangumi 且没填用户名/令牌就不发请求"）。这些拷贝早于三级阶梯的第三级（扩展上报身份），看不见它，导致零配置用户在 GUI 里 `/api/init` 实际请求数为 **0**，而同一 payload 直打后端返回 202——正是铁律 5 说的四面契约漂移。三处均已删除，统一把请求交给后端；只有三级账号来源全空时，后端才返回 `409 no_profile_signal_sources`，三端只渲染后端 reason，并补上"或先在浏览器登录 bgm.tv 让扩展自动识别账号"的可操作路径。静态契约测试禁止三端重新引入客户端准入 guard，真实页面 E2E 则锁住 setup / 桌面请求确实发出。隐私边界：uid 与用户名本就是公开资料（构成用户主页 URL），通道不读 Cookie、不传令牌、不采集任何浏览行为。init 写保护中间件对 `POST /api/sources/bangumi/identity` 做精确路径放行（`_init_write_allowlist`），因此扩展在 guided init 进行中上报的身份能当轮落地——正是三级账号解析最需要它的时刻，而非被 409 拦到下一轮。
+**准入判定只由后端做**：setup 与桌面 Web 把请求交给后端，只有账号来源全空时才返回 `409 no_profile_signal_sources`。插件在 guided init 期间可上报公开 uid/用户名，但不读 Cookie、不传令牌、不采集浏览行为。
 
 ## 已知限制
 

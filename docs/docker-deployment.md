@@ -477,9 +477,9 @@ ports:
 
 如果数据库出现问题，可以在容器内运行 `docker exec openbiliclaw-backend openbiliclaw db-repair` 进行检查和修复。
 
-**Q: 后端启动了、健康检查也通过了，但插件里没有推荐？**
+**Q: 后端启动了、健康检查也通过了，为什么插件里没有推荐？**
 
-最常见原因是没有执行过 `init`。容器启动只运行 API 服务器，用户画像需要通过 init 命令生成：
+这是当前设计：浏览器插件是连接器，不展示推荐。请在桌面 Web、移动 Web 或 NEKO 中查看推荐；首次使用仍需完成 init：
 
 ```bash
 docker exec -it openbiliclaw-backend openbiliclaw init

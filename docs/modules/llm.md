@@ -61,7 +61,7 @@ NEKO 宿主可注入 `BackgroundTokenBudget`。共享 `LLMService` 在 provider 
 | v0.3.150+ reasoning-only 诊断与兼容端点自愈 | ✅ | OpenAI-compatible / DeepSeek / OpenRouter / Ollama native 返回 HTTP 200 且含 `reasoning_content` / `reasoning` / `thinking`、但最终 `content` 为空时，错误会明确提示 `returned reasoning but no final content` 并带 `finish_reason`，避免和完全空响应混淆。泛 OpenAI-compatible 首请求仍保持标准兼容：空 effort 不发送非标准字段；若调用方明确传 `reasoning_effort=""`，端点却在去掉 `response_format` 后仍返回 reasoning-only，provider 才追加一次 `thinking={"type":"disabled"}` 重试，修复 SenseNova/DeepSeek relay 把输出预算全部耗在默认 thinking 的情况。 |
 | v0.3.117+ reasoning-first 探活 | ✅ | `LLMProvider.health_check()` 与配置页 LLM 测试探针统一使用 `max_tokens=4096`，避免 SenseNova 等 OpenAI-compatible reasoning-first 模型先产出 `message.reasoning`、尚未到 `message.content` 就被截断，从而误报空响应；通用 health check 同时显式传 `reasoning_effort=""`，所以 DeepSeek 不会让一次连通性探针继承 `medium/high/max`、扩成 16K/32K thinking 请求后在 init 门禁内假超时 |
 | LLM Provider 实例路由 v2 | ✅ | `[llm.instances.<id>]` 把 adapter 类型与渠道端点解耦，同类型可配置多个 Base URL / token / model；`default_chain` 是任意长度全局故障切换链，`[llm.routes.<module>]` 默认继承，也可拥有自己的有序链。模块自定义链耗尽后不会越界 spill 到全局链 |
-| 实例模型发现与可编辑选择 | ✅ | PC Web、插件与 setup 把当前未保存实例交给 `POST /api/config/discover-models`，后端精确调用该端点的 OpenAI-compatible `GET /models`，不保存配置；模型和 Effort 都是可手填的 combobox，发现失败保留原输入。该草稿端点在 active registry 无法构建的 degraded 恢复态仍精确放行，不会被旧配置造成的 503 阻断。协议只标准化模型列表，没有 effort capability 枚举，因此 Effort 选项是本地 advisory，不冒充服务端事实 |
+| 实例模型发现与可编辑选择 | ✅ | PC Web 与 setup 把当前未保存实例交给 `POST /api/config/discover-models`，后端精确调用该端点的 OpenAI-compatible `GET /models`，不保存配置；模型和 Effort 都是可手填的 combobox，发现失败保留原输入。该草稿端点在 active registry 无法构建的 degraded 恢复态仍精确放行，不会被旧配置造成的 503 阻断。浏览器连接器不调用配置发现端点。协议只标准化模型列表，没有 effort capability 枚举，因此 Effort 选项是本地 advisory，不冒充服务端事实 |
 | v0.3.75 Per-module LLM 路由生效 | ✅ | `LLMService` 按 caller bucket 路由 soul / discovery / recommendation / evaluation；旧 `[llm.<module>] provider/model` 会无损投影为 v2 模块实例链，保留兼容但不再是推荐写法 |
 | v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / OpenAI-compatible 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
 | 体验优化：B站动态语气 | ✅ | 推荐、画像总结和聊天 prompt 统一接入 `ToneProfile`，在“老B友”基础上按用户画像微调语气 |
@@ -73,7 +73,7 @@ NEKO 宿主可注入 `BackgroundTokenBudget`。共享 `LLMService` 在 provider 
 | v0.3.113 Embedding 目标维度 | ✅ | `[llm.embedding].output_dimensionality` 默认 1024，与 Ollama `bge-m3` 对齐；Gemini 传 `output_dimensionality`，`provider = "openai"` 且模型为 `text-embedding-3-*` 时传 `dimensions`，Ollama / OpenRouter / 泛 OpenAI-compatible 等未确认支持的后端不传。L2 cache 仅在 provider 确认支持目标维度时按 `model#dim=N` 签名隔离，同一文本的不同维度向量不会互相覆盖，也不会把未生效的兼容后端标成伪维度 |
 | v0.3.155 Ollama embedding 诊断 + 自修 | ✅ | `llm/ollama_diagnostics.py`：`diagnose_ollama_embedding()` 把向量模型不可用分类为 `not_running` / `model_missing` / `model_broken` / `model_path_encoding` / `disk_full` / `network` / `model_oom` / `error`（先 `/api/tags` 判定服务与模型在位，再真打一次 embed——覆盖"模型在列表里但加载失败"的 500 场景）。`model_path_encoding` 专指 Windows 非 ASCII 用户名 / mojibake 路径导致 `llama-server` 无法从 `.ollama\models` 加载模型的失败，重新拉取不会修复，需迁移模型目录或手动设置 `OLLAMA_MODELS` 到纯英文路径；`model_oom` 从旧 `model_broken` 中拆出，明确内存不足时重拉无效；`disk_full` 既识别 pull / probe 错误文本，也会在拉取前检查 `OLLAMA_MODELS` / 托管模型目录所在卷是否至少有约 2.0GB 空间；`network` 区分无法访问 registry 的下载源问题与本地模型损坏。`pull_ollama_model()` 经原生 `/api/pull` 流式拉取 / 重拉模型并回调进度；两者均 `trust_env=False` 且可注入 `httpx.MockTransport` 测试。`OllamaProvider.embed()` 失败日志附带响应体错误片段（此前只有裸状态码）。供 `/api/init-status` 的 `embedding_check`/`embedding_detail` 与 `POST /api/embedding/repair` 一键修复使用（见 [init 模块](init.md)）。v0.3.206+：识别 Windows 访问违规崩溃（`0xc0000005` / `access violation`），在 `model_broken` 内给出「一键重拉 → 重启 → 内存/虚拟内存 → 杀软白名单 → 升级」排序清单，不再只提示「下载不完整或内存不足」 |
 | v0.3.97 EmbeddingService 实时探活 | ✅ | `EmbeddingService.probe()` 绕过 L1/L2 缓存直接打一次 provider，返回是否拿到非空向量；供 `/api/health.embedding_ready` 做**实时**就绪判定（缓存命中的旧成功不会掩盖 provider 已掉线 / 模型没拉）。`/api/health` 侧自带 TTL + single-flight，probe 不缓存结果、每次都真打 |
-| v0.3.114 配置页服务探测 | ✅ | `POST /api/config/probe-service` 对用户当前表单草稿做无写入真实探测：LLM 走临时 `LLMRegistry.complete_provider()`，embedding 走临时 `EmbeddingService.probe()`，结果供 PCWeb / 插件设置页行内展示。它属于 degraded 恢复控制面：不依赖失败的 active registry；也属于 guided init 写端门控的只读例外，初始化运行时仍可测试。真实 LLM 请求始终经过 RuntimeContext 的稳定 total gate；LLM 实例 / 链的外层 deadline 按配置 clamp 到 10–120 秒，桌面与 popup 使用 125 秒请求预算以覆盖本地 Ollama 冷启动。 |
+| v0.3.114 配置页服务探测 | ✅ | `POST /api/config/probe-service` 对用户当前表单草稿做无写入真实探测：LLM 走临时 `LLMRegistry.complete_provider()`，embedding 走临时 `EmbeddingService.probe()`，结果供桌面 Web 与 `/setup/` 行内展示。它属于 degraded 恢复控制面，也属于 guided init 写端门控的只读例外。真实 LLM 请求始终经过 RuntimeContext 的稳定 total gate；实例 / 链的外层 deadline 按配置 clamp 到 10–120 秒，Web 客户端使用 125 秒请求预算以覆盖本地 Ollama 冷启动。 |
 | v0.3.20 Embedding fallback 能力识别 | ✅ | `LLMProvider.supports_embedding` 类属性显式声明 provider 是否真的有 embeddings endpoint。Claude / DeepSeek / OpenRouter / OrcaRouter 标 `False`（前者无 API、其余继承自 OpenAIProvider 但实际后端不路由 embeddings）；OpenAI / Gemini / Ollama 标 `True`。当前只在 `[llm.embedding].fallback_provider` 非空时尝试一个显式备选 provider |
 | v0.3.89.1 OpenRouter embedding 显式路径 | ✅ | `[llm.embedding].provider = "openrouter"` 会构造独立 `OpenRouterProvider`（必须配 `model = "<vendor>/<model>"`）。它不参与 chat 实例链；embedding 自己未填凭据 / headers 时，可兼容借用首个启用的同类型 chat 实例，旧 `[llm.openrouter]` 也继续可读 |
 | v0.3.20 OpenAI Provider embed | ✅ | `OpenAIProvider.embed()` 走 `/v1/embeddings`，默认 `text-embedding-3-small`。OpenAI 用户没显式配 embedding 时不再静默返回 None。失败返回 `[]`（与 Ollama / Gemini 一致），调用方降级处理 |
@@ -151,7 +151,7 @@ response = await provider.complete(
 # 健康检查
 available = await provider.health_check()  # bool
 # health_check 使用 max_tokens=4096，兼容先输出 reasoning 再输出 content 的服务。
-# 设置页 / 插件的配置探针也使用同一个连通性探针预算。
+# 桌面设置页与 setup 的配置探针也使用同一个连通性探针预算。
 
 provider = OpenRouterProvider(
     api_key="or-...",
@@ -245,7 +245,7 @@ POST /api/config/probe-service
 - `kind="llm"` / `kind="llm_fallback"`：旧客户端兼容入口，分别映射旧默认项和旧备选项。
 - `kind="embedding"`：构建临时 `EmbeddingService`，调用 `probe()` 绕过 L1/L2 cache 获取一次真实向量。
 
-chat 探针使用 `max_tokens=4096`，避免 reasoning-first 服务尚未输出最终内容就被误判。LLM 实例 / 链的 outer timeout 使用 `[llm].timeout`，但固定夹在 10–120 秒之间：120 秒是有限控制面预算，同时覆盖 Ollama 约 31 秒的冷加载重试窗口；桌面 Web 与 popup 的 fetch timeout 为 125 秒，确保客户端不会先取消仍由后端合法持有的请求。deadline 到期返回结构化 `ok=false` 与 `LLM connectivity probe timed out after Ns.`，不抛裸 500。其它失败同样以 `ok=false` 的正常响应返回，前端可直接显示实例 / provider 类型 / model / latency / error。active registry 因旧配置构建失败时，该端点仍从提交草稿临时建 registry，并继续通过 RuntimeContext 的 total gate；guided init 运行时也精确放行这个无写入端点，LLM / 整链 / embedding 测试不会再被 POST 写端守卫误判为 `409 init_running`。它不会把 degraded 业务流量或配置保存一并放开。详见 [配置参考](config.md)。
+chat 探针使用 `max_tokens=4096`，避免 reasoning-first 服务尚未输出最终内容就被误判。LLM 实例 / 链的 outer timeout 使用 `[llm].timeout`，但固定夹在 10–120 秒之间；桌面 Web 与 `/setup/` 的 fetch timeout 为 125 秒，确保客户端不会先取消仍由后端合法持有的请求。deadline 到期返回结构化 `ok=false`，其它失败也以正常响应返回可诊断信息。active registry 构建失败时，该端点仍可从草稿临时建 registry，并继续通过 RuntimeContext 的 total gate；guided init 运行时也精确放行这个无写入端点。详见 [配置参考](config.md)。
 
 ### 配置草稿模型发现 API
 

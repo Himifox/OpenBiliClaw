@@ -21,6 +21,7 @@
 | 对话与确认卡 | N/A | PASS | 产品边界排除：主应用保留；桌面/移动共享对话测试仍在，popup 依赖已移除 |
 | Guided init | N/A | PASS | 产品边界排除：主应用与 setup surface 保留；popup init 模块/入口已移除 |
 | 全量后端配置编辑 | N/A | PASS | 产品边界排除：主应用负责；插件产物只保留连接 endpoint 与设备配对模块 |
+| 主动候选展示与确认 | N/A | PASS | NEKO / 可见主应用拥有展示与确认；连接器 background 不轮询 sent/seen 端点，不使用系统通知，也不因收到 runtime 事件消费候选 |
 | 上游账号写操作 | N/A | PASS | 未授权且不属于简化范围；fan-out 契约测试禁止 favorite/follow/like/save，真实账号 mutation 为 none |
 | 发布 / 商店上传 | N/A | NOT_RUN | 用户未要求发布；不改版本、不打 tag、不上传商店 |
 
@@ -51,6 +52,6 @@
 - TypeScript：`tsc -p tsconfig.json --noEmit`，PASS。
 - 定向回归：84 / 84 PASS，覆盖 popup shell、endpoint、device auth、ext login、cookie sync、service-worker buffer、dispatcher mutex、manifest/build assets 与桌面/移动 runtime 合并刷新。
 - 全量扩展回归：1016 / 1018 PASS；两个失败均为基线环境/跨平台测试（本机无 `npm` 可执行文件、AMO workflow 的 CRLF 正则），不命中本次 popup / background 改动。
-- 构建：Chrome 19、Firefox 19、Safari 20 个 manifest script/WAR 资产预检全部 PASS；Firefox / Safari popup 目录均精确包含 8 个连接器文件。
+- 构建：Chrome 19、Firefox 19、Safari 20 个 manifest script/WAR 资产预检全部 PASS；当前 popup 目录精确包含 9 个连接器文件（新增离线同步状态模块）。
 - UI：1024 与 390px 横向 overflow 为 0，主控件至少 44px；fresh-eyes 首轮发现的数量语义、长列表与状态截断问题已修复，复核无 blocker / major。
 - 状态变更：真实上游账号 mutation 为 none；未改版本、未打 tag、未上传商店。

@@ -93,7 +93,7 @@ Next action (AI service check failed):
 
 Next action (init has been run automatically):
   - Verify the backend is healthy: curl -sS <Health URL>
-  - Open Mobile Web: click the phone icon in the extension header and scan the QR code; if the backend address is loopback, the extension calls `GET /api/qr-info` and reads the `lan_ip` response field to show the LAN URL automatically
+  - Open Mobile Web: open `http://<LAN-IP>:8420/m` on the phone; IPv6 literals use brackets, for example `http://[fd00::1]:8420/m`
   - See recommendations:    cd <dir> && uv run openbiliclaw recommend
   - View the soul profile:  cd <dir> && uv run openbiliclaw profile
   - Re-run init manually if needed: cd <dir> && uv run openbiliclaw init
@@ -135,7 +135,7 @@ the user knows what fed their soul profile. Render approximately:
 >   - 📚 Bangumi:想看/想读/想玩 W 条 / 看过/读过/玩过 D 条 / 在看/在读/在玩 G 条 → **入库 U 条事件**（仅在本轮选择并填写公开用户名时）
 >   - 📊 画像建模总事件:Z 条
 >   - 🔍 首轮发现内容池:D 条
-> 现在可以打开扩展 popup 看推荐了。」
+> 现在可以打开桌面 Web、移动 Web 或 NEKO 查看推荐了。」
 
 When 小红书 totals are 0 / 0 / 0 the CLI also prints a "ℹ️  小红书
 0 条信号入库" hint with likely causes — pass that note through to

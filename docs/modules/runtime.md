@@ -55,7 +55,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | Bangumi 后台 discovery producer | ✅ | `BangumiDiscoveryProducer.produce_if_due()` 在 Bangumi 平台族低于 quota 且启用时，调用官方匿名 API 执行 `search / ranked / latest`。它共享关键词 claim/use/fail 生命周期，按 UTC 日条目预算、类型 cursor、最小间隔与持久化 `429 Retry-After` cooldown 调度；429 rollback 在途/未执行关键词。browse 的非零旧 cursor 若因 total 缩小触发 `invalid_request`，先持久化归零再有界重试一次。跨 mode 去重并应用最终 limit 后才按保留候选的 strategy 扣预算，重复/截断条目不占额度。只 enqueue raw candidates。`RuntimeContext` 在 generation 构建/热重载时拥有并关闭 `BangumiClient`，GET 状态页通过独立本地查询读取 cooldown/run ledger，不构造 producer。显式 CLI discover 只服从来源开关，不服从 daemon scheduler 总开关。 |
 | Linux.do 后台 discovery producer | ✅（真实 Chrome E2E） | `LinuxdoDiscoveryProducer.produce_if_due()` 在 Linux.do 平台族低于 quota 且启用时，按 source_modes 入队 search / hot / feed / creator / related 任务。真实站点访问只发生在扩展的 `linux.do` 同源标签页，全部为 JSON GET；候选只 enqueue raw rows。搜索复用统一 keyword claim，结构化 rate-limit/network/timeout/access/login 失败会回滚 claim；creator/related 从近期和同轮结果取种子。2026-08-09 已完成安装版热更新、五路任务与正式候选管线 E2E。 |
 | V2EX 后台 discovery producer | ✅ | `V2EXDiscoveryProducer.produce_if_due()` 在 V2EX 平台族低于 quota 且启用时，按 `search / node / tab / hot / latest` 调用匿名 API / Feed；共享关键词 claim、Node/Tab 配置、分支日预算、最小间隔和持久化 rate-limit cooldown。PAT 存在时由 `V2EXClient` 使用 API 2.0，401/403 自动降级匿名。Topic 经 `v2ex_topic_to_content()` 转为文字卡后只 enqueue raw candidates，LLM 评估由共享 coordinator 执行；Node producer 未配置 allowlist 时可使用 `v2ex_node_affinity` 排序。 |
-| X 源健康状态机 | ✅ | `storage/x_health.py` 的 `XSourceHealthStore` 持久化 `ok` / `missing_cookie` / `expired_cookie`(401) / `blocked`(403) / `rate_limited`(429) 五态；按 code 分别退避，429 带 `cooldown_until` 自愈，401/403/missing 须等用户重新登录 x.com 才恢复；连续 For-You 失败触发 `feed_allowed()=false` 自动暂停。状态经 `GET /api/sources/x/status` 暴露到插件设置页。 |
+| X 源健康状态机 | ✅ | `XSourceHealthStore` 持久化五态并按错误类型退避；桌面设置页读取完整状态，连接器只显示当前来源的身份同步摘要 |
 | 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、惊喜队列加载数量、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
 | 惊喜永久消费 | ✅ | `mark_delight_sent()` 仍只表示通知已送达；新增 `mark_delight_seen()` 供用户主动叉掉时委托 storage 写 canonical `seen_items` 并置 `delight_notified`，随后更新主动惊喜冷却。两种动作分开，避免“通知出现过”被误当成“用户看过”。 |
 | Durable 对话失败原子性 | ✅ | `/api/chat/turns` 只把显式无效/空回复持久化为 `status="failed", reply="", error=<安全分类文案>`；provider、限流、配置、超时、service 瞬态失败与 shutdown cancellation 都保持 `pending` 并在队头原位有界退避。真实回复以 `WHERE status='pending'` completion CAS 发布；重复 completion、迟到 failure 与重启重放不能覆盖首个可见终态。回复完成后的 11-kind learning/settlement 由独立 `DialogueSettlementQueue` 处理，不计入 SQLite reply backlog。 |
@@ -66,7 +66,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | Activity feed 状态摘要 | ✅ | `/api/activity-feed` 聚合认知更新、反馈、推荐池补货和 live summary；未初始化且还没有推荐 / 可换池 / 补货产物时，普通 `/api/events` 不会新写入 pending signals，旧的 `pending_signal_events` 也不会抢占初始化提示。初始化后 pending 文案统一为“已记下 N 个新动作，下一轮补货会拿来参考”，表示 discovery refresh 水位，不表示画像待处理队列。 |
 | 桌面 Web 推荐卡链接与元信息 | ✅ | `/web` 推荐卡、稍后再看 / 收藏卡、消息抽屉内容和惊喜推荐封面都使用真实 `<a href target="_blank" rel="noopener noreferrer">`；点击上报同时绑定 `click` 与中键 `auxclick`，但不阻止浏览器原生中键 / Ctrl 或 Cmd 点击 / 右键菜单行为。`RecommendationOut` 增量暴露 `duration`、`view_count`、`like_count`、`comment_count`、`share_count`、`danmaku_count`、`up_mid`、发布时间与目录指标 `rating_score / rating_count / source_rank`；桌面卡片展示视频时长、真实互动和 Bangumi 评分 / 评分人数 / 排名，字段为 0 或缺失时整段隐藏，不在无数据卡片上显示空元信息。微博只有真实 `reads_count` 才展示 view，转发数走 share，favorite/danmaku 缺失不占位；URL 缺失时回退 `https://m.weibo.cn/detail/<id>`。Bangumi 缺 URL 时回退 `https://bgm.tv/subject/<id>`；B 站且 `up_mid>0` 时 UP 主名跳到 `space.bilibili.com`，其它平台保持纯文本。 |
 | 桌面 Web 首屏渐进水合 | ✅ | 首屏以 `/api/ping` 判断连接，推荐与 runtime 状态各自返回即各自渲染；health / init / profile / activity / config 等次级读取不会挡住推荐卡。推荐消费后仍独立复读 runtime 库存，失败沿用 1/2/4/8 秒的资源级恢复。 |
-| 三端待聊确认角标同步 | ✅ | 插件 popup、桌面 Web 与移动 Web 都在首屏主动读取 `chat/pending-confirmations`，并在后端恢复、runtime stream 重连或收到事件时去抖刷新；桌面端在推荐卡 saved-status 请求扇出前先发角标请求，移动端底部对话 Tab 显示与 PC/插件一致的数字角标及无障碍计数。浏览器工具栏 badge 仍只表达后端健康状态，不混入待聊数量。 |
+| 可见宿主待聊确认同步 | ✅ | 桌面、移动与 NEKO 可见宿主读取 `chat/pending-confirmations`；浏览器工具栏 badge 只表达后端健康状态，不混入待聊数量 |
 | 桌面标签页后台节流 | ✅ | 桌面 Web 以 `startDesktopBackendSession()` 作为 hydrate + runtime WebSocket 的可见性边界：隐藏状态启动零业务请求，进入后台即关闭 stream 并清理推荐/runtime/库存/activity/init 恢复定时器；恢复前台时按 15 秒 snapshot freshness 单飞 hydrate，再只建一个 CONNECTING/OPEN socket。后端 `/api/recommendations` 另用 1 秒 cache + `asyncio.Lock` 合并旧版/已加载标签页同时恢复造成的昂贵读取，并对 per-card saved status 做同窗口短缓存；reshuffle/append/feedback/save/remove 均失效对应缓存。 |
 | 桌面 Web 封面请求优先级 | ✅ | 桌面推荐仅前 4 张封面使用 `eager/high`，后续封面使用 `lazy/low`；Delight 保持 `eager/high`。 |
 | 桌面 Web 动效与布局稳定 | ✅ | 根滚动启用 `scrollbar-gutter: stable`，避免内容变长时顶栏横向抖动；消息 / 活动 / 手机二维码抽屉关闭进入 `.is-closing` 退出动画，快速开关会取消未完成 close；六个主分区切换使用短 `page-enter` 淡入。新增动效统一受 `prefers-reduced-motion: reduce` 保护。 |
@@ -79,15 +79,15 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 桌面 Web 可撤销即时反馈 | ✅ | 普通推荐卡和正向/避雷探针的非聊天动作先更新本地 UI，再由共享 pending-action coordinator 保留 10 秒提交屏障；点击撤销会取消定时器且不发 API 写请求，提交失败恢复原状态，`pagehide` 会以 keepalive 立即结清未提交动作。探针聊天和推荐评论需要服务端回复或文本语义，保持直接提交，不伪装成可撤销动作。 |
 | 桌面 Web 探针反馈文案 | ✅ | 消息抽屉与画像页的正向/避雷探针共用一个 domain-aware feedback helper；inline 结果与 toast 使用同一条文本，明确显示经折叠空白且最长 24 字符的探针主题（超长以省略号收束），并通过 `textContent` / `showToast(text)` 写入，避免把主题插入 HTML。 |
 | 桌面 Web 对话等待反馈 | ✅ | 「聊聊口味」发送消息后立即显示「阿B 正在思考，等待模型回复…」状态；服务端创建 durable `pending/processing` turn 并触发历史刷新后，该状态继续由真实 turn 生命周期渲染，不会被刷新覆盖成只剩用户消息。完成或失败时原位替换为终态内容；等待气泡使用 `role=status`、polite live region、`aria-busy` 和受 reduced-motion 保护的三点动效。 |
-| 探针聊天跨界面历史对齐 | ✅ | 从消息里的「多聊聊」创建的 durable `scope=probe` / `scope=avoidance_probe` turn 与普通 `scope=chat` 一样进入插件、桌面 Web、移动 Web 的主对话历史；共享 renderer 保留统一时间顺序，pending / processing 继续按真实 turn 状态刷新，`scope=delight` 仍由推荐卡独立管理。 |
-| 三端 probe 反馈语义 | ✅ | 桌面、移动和插件的兴趣/避雷 probe 统一使用 confirm/defer/reject/chat 语义，所有操作均有可见文字；推荐区不新增画像或对话纠偏引导入口。 |
-| 四端换批语义 | ✅ | 桌面 Web、移动 Web 与扩展 side panel 都把当前卡片 ID 作为 `excluded_bvids` 提交换批；后端负责默认硬去重并在成功时只写一条中性的 `reshuffle` 批次事件，不批量提交逐卡 `dismiss`。桌面端已删除“换一批时忽略当前”开关；CLI 无持久卡片列表，继续由推荐历史与 `seen_items` 去重。 |
+| 探针聊天跨界面历史对齐 | ✅ | 从消息里的「多聊聊」创建的 durable `scope=probe` / `scope=avoidance_probe` turn 与普通 `scope=chat` 一样进入桌面 Web、移动 Web 与 NEKO 的主对话历史；共享 renderer 保留统一时间顺序，pending / processing 继续按真实 turn 状态刷新，`scope=delight` 仍由推荐卡独立管理。浏览器连接器不渲染对话。 |
+| 可见宿主 probe 反馈语义 | ✅ | 桌面、移动和 NEKO 的兴趣/避雷 probe 统一使用 confirm/defer/reject/chat 语义，所有操作均有可见文字；浏览器连接器只传输宿主事件，不确认未展示内容。 |
+| 换批语义 | ✅ | 桌面 Web、移动 Web 与 NEKO 把当前卡片 ID 作为 `excluded_bvids` 提交换批；连接器不拥有推荐列表或换批动作 |
 | 桌面 Web 前端偏好键 | ✅ | `/web` 的纯前端偏好继续走 `storageGet` / `storageSet`，不写 `config.toml`：`obc.theme` 保存主题三态，`openbiliclaw.webui.autoLoadOnScroll` 保存滚动自动加载开关；设置页保存状态行回显主题与滚动自动加载状态。 |
 | 扩展捕捉 E2E 控制事件 | ✅ | local-only `/api/extension/e2e/run` 会通过 runtime stream 投递 `extension_e2e_run`，要求已安装扩展在真实平台页执行白名单 DOM 操作；`/api/extension/e2e/result` 回收插件执行结果，后端再按运行窗口匹配 `/api/events` 中自然捕捉到的事件。 |
 | 兴趣探针投递保护 | ✅ | `interest.probe` 只有成功投递到 runtime stream 后才写入 `probed_domains` / `probed_axes` / `probed_distance_bands` 冷却状态；事件 payload 会带 `probe_mode` 与 `challenge`，前端离线时不会消耗 active probe。普通 `near` 探针与挑战探针使用独立 active 额度，运行时选择时仍统一仲裁。 |
 | 避雷探针投递与仲裁 | ✅ | `avoidance.probe` 与 `interest.probe` 共用 proactive push 循环；每轮最多投递一个 probe，并用 `last_probe_kind` 在正向/负向都有候选时轮流选择，避免探针频率翻倍。 |
 | 图片代理 API | ✅ | `/api/image-proxy` 为移动 Web 和浏览器插件代理白名单 CDN 封面图，逐跳校验 redirect，并在返回前完成类型和 10MB 大小校验；成功封面写入 `data/image-cache/`（小红书 token 归一化），并按「已消费且未保存」定期清理、保护无法重抓的封面；多模态 discovery 评估也复用同一缓存，命中时不再重新请求 CDN。新浪图床请求按当前 redirect host 附 `Referer: https://weibo.com/`，跳往其它 CDN 时立即移除，满足真实防盗链且不跨域泄漏。 |
-| 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、`/api/runtime-status` 更新摘要、手动 check/apply、跨配置热重载存活的进程级 apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。dirty worktree guard 把 staged 修改 / 新增视为脏，同时继续豁免 `uv.lock`、未跟踪文件和本地 `ollama-models/`；apply 前会重置 `uv.lock` 再快进。git 命令通过 `asyncio.create_subprocess_exec` 执行，避免 Windows 长时间运行后线程池 `subprocess.run` 卡死或异常返回；tag fetch 使用 `git fetch --force --tags origin`，避免本地旧 tag 被远端重打后卡在 `would clobber existing tag`。`[network].mode=custom` 时 git 显式使用 `-c http.proxy=<url>`，uv/pip 显式叠加 `HTTP_PROXY/HTTPS_PROXY`；`direct/system` 的继承行为保持不变。**依赖同步按 daemon 的真实工具能力选择**：`uv.lock` 存在且 PATH 可解析 `uv` 时运行 `uv sync --no-install-project --inexact`；没有 `uv` 的官方 pip/venv 安装从 `pyproject.toml` 读取 runtime requirements，交给当前 `sys.executable -m pip`。两条路径都只同步依赖、保留 editable 项目与用户 extras，避免 Windows 后端运行时重装/替换被锁定的 console entry；完成后统一用 `python -m openbiliclaw.cli <原参数>` 跨平台重启。依赖工具缺失、300 秒超时和非零退出会把完整诊断写入本地日志，并在 `last_error` 留下工具/退出码/真实错误摘要。GitHub tags API 的 403/429 或传输异常会尝试 GitHub tags Atom feed 兜底；TLS 校验失败绝不以 `verify=False` 降级，直接上报 `tls_verification_failed` 并提示配置可信 CA。`detect_install_mode()` 上报 `frozen / docker / git / unsupported` 安装形态，桌面 Web 与扩展 popup 据此禁用非 git 安装的自动应用控件。**可信 remote 校验 git 实际使用的全部地址**：同时读取 `git ls-remote --get-url origin` 与 `git remote get-url --all origin`，任一地址不在 allowlist 即拒绝；`url.insteadOf` 改写后的非可信主机不能借原配置地址放行，也绝不自动改写用户 git 配置。规范化大小写与可选 `.git` 后缀，并把 GitHub 官方 `ssh.github.com[:443]` / scp 形态等价为 `github.com`；镜像/代理包装 URL 不会自动折算成官方地址。**守卫拒绝不再静默**：每条 guard 拒绝都 `logger.warning` 写明细，并把真实原因写入 `last_error`；修复命令中的仓库路径始终带双引号，含空格的 Windows / POSIX 路径可直接复制。apply 在任何 git 变更前验证 backend tag 通道与 prerelease 策略，`extension-v*` / `desktop-v*` / 畸形 tag 一律拒绝；候选排序按 SemVer §11 处理 prerelease：同号 stable 胜过任何 prerelease、`rc.10 > rc.9 > rc1`，且 UI 展示保留 prerelease 后缀（不再把 `0.4.0-rc1` 显示为 `0.4.0`）。**展示面范围**：桌面 Web 支持检查 / 应用并在 error 状态优先显示 `last_error`，扩展 popup 展示状态且禁用非 git 自动应用；移动 Web 更新面板与 CLI update 命令明确不在当前功能范围。**冻结守卫**：冻结包与 Docker 只运行 check-only 提醒循环，分别引导下载新版安装包或执行 `docker compose pull && docker compose up -d`。降级模式（LLM 注册表不可用）仍放行 update-status / check / apply，便于拉取修复版本恢复。 |
+| 自动更新 | ✅ | `AutoUpdateService` 检查 backend tag，并以可信 remote、dirty worktree、fast-forward、安装形态和 TLS 守卫保护 check/apply。完整更新状态与操作只在桌面 Web 展示；浏览器连接器不提供后端更新控件。 |
 | 开机自启动管理 | ✅ | `runtime.autostart` 提供 macOS LaunchAgent、Windows HKCU Run、Linux XDG autostart 三套当前用户作用域 manager；Windows 源码安装使用 `pythonw + .pyw`，冻结桌面包直接注册 `OpenBiliClaw.exe` 并兼容识别旧双路径项。`reconcile()` 由 CLI 与桌面包入口共用，`/api/autostart-status`、`/api/autostart/apply`、`openbiliclaw autostart` 和设置页共用 env / shadow guard 与方向化 enable/disable 事务。 |
 | API 双栈监听 | ✅ | `runtime.api_server` 在默认 `0.0.0.0` 配置下显式创建 IPv4 `0.0.0.0` 与 `IPV6_V6ONLY` 的 IPv6 `[::]` listener，并交给同一个 uvicorn server；CLI、Docker 命令入口与 Windows/macOS 桌面包共用，系统不支持 IPv6 或 IPv6 bind 失败时记录 warning 并保留 IPv4。 |
 | Ollama 启动预检与生命周期 | ✅ | `runtime.ollama_supervisor` 统一提供 `ollama_required()`、endpoint 归一化、loopback 判定和 `_ollama_is_running()` / `_ollama_start_serve_background()`；`start` 仅在默认 `localhost:11434` 需要本机 Ollama 时尝试后台拉起，远端 / 自定义端口不强行 `serve`。托管启动会给子进程默认传入 `OLLAMA_KEEP_ALIVE=24h`（若用户已设置则保留用户值），减少 `bge-m3` / `llama-server` 在 UI 请求间隔中卸载再冷启动。Windows 模型路径编码故障自愈使用 `ollama_models_relocation_candidate()` 选 `%PROGRAMDATA%\OpenBiliClaw\ollama-models`（路径含非 ASCII 时放弃自动迁移），目录存在即视作 `managed_models_dir()` 持久迁移标记；后续托管启动用 `env.setdefault("OLLAMA_MODELS", managed_models_dir)`，显式用户环境变量优先。`restart_managed_ollama_with_models_dir()` 只重启本进程管理的 Ollama；若检测到外部启动的 daemon（运行中但没有 `_managed_proc`）则返回 `external_ollama`，避免杀掉用户自己开的官方 App / 服务。`_ollama_start_serve_background()` 现在记录**亲手拉起**的 `Popen` 句柄（复用外部已运行实例时句柄留空），`stop_managed_ollama()` 据此在退出时停掉整棵进程树（Windows `taskkill /T`、类 Unix 进程组 `SIGTERM`），对外部托管的 Ollama 一律不动 —— 桌面托盘「退出」经此调用，clean quit 不再遗留孤儿 `ollama serve` / `llama-server` runner。macOS 桌面包构建必须使用官方 `Ollama.app/Contents/Resources/ollama`，并同时打入同目录 `llama-server`、`llama-*`、`lib*.dylib`、`lib*.so` 和 `mlx_metal_*`；如果只发现 Homebrew 风格单独主程序或缺关键动态库，打包会失败，避免随包 daemon `/api/version` 正常但真实 embedding 500。v0.3.206+：当 `OPENBILICLAW_PROJECT_ROOT` 已设置（桌面包入口），托管 `ollama serve` 的 stdout/stderr 改写入 `<project>/logs/ollama-managed.log`（stderr 合并到 stdout，`stop_managed_ollama()` 负责关闭句柄），让 `llama-server` 崩溃日志可查；未设置时保持 DEVNULL（CLI / dev / 测试）。 |
@@ -265,12 +265,12 @@ embedding_progress.reset()
 
 - `GET /`、`GET /web[/...]`、`GET /setup[/...]`、`GET /m[/...]` 与 `GET /favicon.ico`：静态恢复界面及其 CSS / JS / 图片继续可达；根路径复刻 `packaging/entry.py` 的落点规则——降级模式或画像未初始化（`is_profile_ready()` 明确为 False）时 302 到 `/setup/`，就绪或探测结果未知时 302 到 `/web`（SPA 引导初始化卡片兜底），setup 静态目录缺失时始终回落 `/web`。桌面端从配置响应或 runtime-stream 识别 `degraded` 后自动进入模型设置，展示 blocking issue，并提示补齐 Provider 配置；保存成功后同一进程原地恢复。静态路径使用精确 segment 边界放行，不会把 `/webhook` 一类无关前缀误纳入白名单。
 - `GET /api/ping`：继续作为不访问数据库和模型 Provider 的快速 liveness probe；正常模式仍只返回原有 `status` / `service`，降级模式额外返回 `degraded=true`、`degraded_reason` 和 issues。桌面端先请求它；一旦确认降级，只读取 `/api/config` 并停止推荐、画像、平台源等业务 hydration，避免预期中的 503 控制台噪声与推荐重试。
-- `GET /api/health`：返回 `status="degraded"`、`reason="llm_registry_unavailable"` 和 blocking issues；当 `SoulEngine` 可用时会额外返回可选字段 `profile_ready`，表示 soul 画像是否已生成。v0.3.95+ 额外返回 `embedding_ready`（bool）。v0.3.137+ 该同一 live probe 也被 `/api/init-status` 复用：若 `[llm.embedding].provider` 已配置，初始化前置清单会下发 `embedding_required=true`，`can_start` 与 `POST /api/init` 都必须等真实 probe 通过；provider 留空则可降级初始化。v0.3.97+ 这是一次**实时探活**而非「服务是否构建」：经 `EmbeddingService.probe()` 绕过缓存真打一次 provider，探测缓存保存 `ready / failed / timed_out` 原始三态而非调用方布尔值，并由 `_EMBEDDING_PROBE_TIMEOUT_SECONDS`（默认 15s）上限兜住。普通 `/api/health` 仅把 loopback Ollama 的 `timed_out` 解释为冷加载中的乐观可用，避免外部 Homebrew / 官方 Ollama 默认 5 分钟卸载后让插件横幅误报停服；远程 Ollama 或非 Ollama provider 超时仍为 `false`。成功沿用 `_EMBEDDING_READY_TTL_SECONDS`（默认 30s），明确失败与超时使用 8s 短 TTL 重探；single-flight 锁继续让并发 health/init 共享同一次真实 probe，但各入口独立解释结果。provider 现已 404/500（如 `bge-m3` 没拉、Ollama 停了、随包缺 `llama-server`）、返回空向量或抛出异常仍会如实报 `false`，修好后下次探活即翻 `true`；服务对象不存在仍 `false`，老/无 `probe()` 的服务回退「构建即就绪」。`false` 表示语义去重 / MMR 多样性降级（可能刷到换皮重复内容），插件 popup 据此显示「一键启用本地 Ollama」横幅。
+- `GET /api/health` 返回 degraded reason、`profile_ready` 与 `embedding_ready`。连接器只用它判断后端连接/健康，不渲染 Ollama 修复或完整初始化控件；这些恢复动作由 `/setup/` 与桌面 Web 承担。
 - `GET /api/config`：返回完整配置、`degraded=true` 和同一组 issues。
 - `PUT /api/config`：验证并保存修复配置，随后从降级上下文原地构建完整 runtime；成功返回 `reloaded=true / restart_required=false` 并立即解除业务 API 的 503 guard。核心构造失败会回滚配置并保持降级。
-- `POST /api/config/probe-service` 与 `POST /api/config/discover-models`：把未保存的 `config.llm` 草稿应用到内存副本，分别做一次真实目标实例探测或 OpenAI-compatible `GET /models`；不读取失败的 active registry、不写盘，LLM 探测仍经过该进程稳定的 total gate。这样 `/setup/`、桌面 Web 与插件能够先验证 replacement endpoint，再保存恢复配置。
+- `POST /api/config/probe-service` 与 `POST /api/config/discover-models`：把未保存的 `config.llm` 草稿应用到内存副本，分别做一次真实目标实例探测或 OpenAI-compatible `GET /models`；不读取失败的 active registry、不写盘，LLM 探测仍经过该进程稳定的 total gate。这样 `/setup/` 与桌面 Web 能够先验证 replacement endpoint，再保存恢复配置；浏览器连接器不调用这两个端点。
 - `GET|POST /api/config/source-share-suggestion`：只使用当前配置、表单开关与本地事件计数生成建议比例，降级时同样可用。
-- `GET /api/runtime-status` 与 `/api/runtime-stream`：用于 popup 展示降级状态；stream 会先发送 `{type:"degraded", ...}` 并保持连接。
+- `GET /api/runtime-status` 与 `/api/runtime-stream`：连接器只用它们显示 Core 健康与连接状态；stream 会先发送 `{type:"degraded", ...}` 并保持连接。完整降级原因和修复控件仍由 `/setup/` 与桌面 Web 提供。
 
 除上述静态恢复界面和 allow-list 接口外，其他 API 在降级模式下返回 503，避免在缺少 LLM registry、数据库/运行时组件不完整时继续执行推荐、发现或画像链路。
 
@@ -289,11 +289,11 @@ embedding_progress.reset()
 
 前端凡是显示“可换”都必须只读取 `pool_available_count`。`pool_pending_count` / `pool_pending_eval_count` / `pool_evaluated_pending_count` 只能用于“正在整理成可换内容”等辅助文案和诊断。
 
-`refresh.pool_updated` 不只来自后台补货和文案预计算。`GET /api/recommendations` 在无历史推荐时会从池子 bootstrap；`reshuffle` / `append` 则在 recommendation + shown 原子提交后，先用 `ServeResult.pool_counts_after` 直接发布扣减快照，不做响应内重复扫描，再 detached 读取一次精确 canonical readiness 处理 per-topic 窗口补位等差异。已打开的插件、移动 Web 和桌面 Web 应用该快照刷新库存数字、底部可换提示和空态文案，但不得因此重拉 `/api/recommendations` 替换当前列表。
+`refresh.pool_updated` 不只来自后台补货和文案预计算。`GET /api/recommendations` 在无历史推荐时会从池子 bootstrap；`reshuffle` / `append` 则在 recommendation + shown 原子提交后，先用 `ServeResult.pool_counts_after` 直接发布扣减快照，不做响应内重复扫描，再 detached 读取一次精确 canonical readiness 处理 per-topic 窗口补位等差异。已打开的移动 Web、桌面 Web 与 NEKO 等可见宿主应用该快照刷新库存数字、底部可换提示和空态文案，但不得因此重拉 `/api/recommendations` 替换当前列表；浏览器连接器不订阅推荐库存 UI。
 
 ### Activity Feed
 
-`GET /api/activity-feed` 返回 popup、移动 Web 和桌面 Web 共用的轻量动态摘要：
+`GET /api/activity-feed` 返回移动 Web、桌面 Web 与 NEKO 等可见宿主共用的轻量动态摘要；浏览器连接器不读取活动流：
 
 - `live_summary`：当前 runtime 摘要；优先显示手动补货中的 `manual_refresh_message`，否则根据 discovery signal 水位或可换池库存生成短文案。
 - `headline`：最新动态条目的摘要；没有动态条目时回退到 `live_summary`。
@@ -303,7 +303,7 @@ embedding_progress.reset()
 
 ### Runtime Status Update Fields
 
-`GET /api/runtime-status` 会保留自动更新摘要字段，供插件和 Web 前端在统一 runtime 状态对象中读取：
+`GET /api/runtime-status` 会保留自动更新摘要字段，供桌面与移动 Web 在统一 runtime 状态对象中读取：
 
 - `auto_update_enabled`：当前后台定时自动更新是否开启；关闭时仍允许手动检查和手动 apply。
 - `install_mode`：安装形态（`frozen` / `docker` / `git` / `unsupported`）。桌面 Web 设置页在非 `git` 时禁用自动更新开关，并按形态提示升级方式（frozen → 下载新安装包，docker → `docker compose pull`）。
@@ -329,7 +329,7 @@ embedding_progress.reset()
 - 发布失败（例如没有订阅者）时不写 `last_probe_kind`，也不消耗 `probed_domains` / `probed_avoidance_domains`。
 - runtime 只会投递 `status="active"` 的正向/负向探针；已经确认、拒绝或过期的旧候选即使仍残留在某次内存快照中，也不会再次进入 `interest.probe` / `avoidance.probe` 事件流。
 - `interest.probe` 正向探针还会记录 `probed_distance_bands`，并在下一次选择时优先尝试没在冷却窗口内问过的 `near/lateral/bridge/wildcard` 档位。
-- `interest.probe` runtime event 暴露 `probe_mode` 和 `challenge`，移动 Web、桌面 Web、插件 inbox 与 OpenClaw 都可以把挑战探针和普通确认区分开；`near` 普通池最多 5 条，`lateral/bridge/wildcard` 挑战池另有 3 条 active 额度。
+- `interest.probe` runtime event 暴露 `probe_mode` 和 `challenge`，移动 Web、桌面 Web、NEKO 与 OpenClaw 等可见宿主都可以把挑战探针和普通确认区分开；浏览器连接器只传输该事件，不展示或确认。`near` 普通池最多 5 条，`lateral/bridge/wildcard` 挑战池另有 3 条 active 额度。
 - `avoidance.probe` 选取会避开近期 `probed_avoidance_domains` / `probed_avoidance_axes`，并读取 `avoidance_probe_feedback_history` 中用户否认过的方向。
 
 ### Extension E2E API
@@ -352,7 +352,7 @@ embedding_progress.reset()
 
 ### Image Proxy API
 
-`GET /api/image-proxy?url=<encoded_url>` 只代理明确白名单内的 HTTP(S) 图片 URL，用于移动 Web `/m/` 和浏览器插件 side panel 的推荐、惊喜推荐和消息封面图。白名单按域名边界匹配，当前包含 `hdslb.com`、`xhscdn.com`、`pstatp.com`、`douyinpic.com`、`douyinvod.com`、`ytimg.com`、`ggpht.com` 和微博图片 CDN `sinaimg.cn`，会拒绝非 HTTP(S)、缺 hostname、userinfo、非白名单域名及 `evilsinaimg.cn` 一类后缀伪装。真实 `wx*.sinaimg.cn` 在浏览器 UA 下要求微博 Referer；抓取器只对当前目标 host 为 `sinaimg.cn` 或其子域的请求附 `Referer: https://weibo.com/`，并在每一跳 redirect 后重新计算，因而不会把该头转发给其它白名单 CDN。
+`GET /api/image-proxy?url=<encoded_url>` 只代理明确白名单内的 HTTP(S) 图片 URL，供桌面、移动与 NEKO 可见界面使用；连接器不渲染推荐或消息封面。
 
 代理不使用自动跳转；`301/302/303/307/308` 最多手动跟随 3 次，每一跳都会重新校验目标 URL。上游响应必须是 2xx 且 `Content-Type` 为 `image/*`。若 `Content-Length` 超过 10MB 会立即返回 413；缺失或伪造长度时，响应体会先流式写入 `SpooledTemporaryFile(max_size=1MB)`，实际读取超过 10MB 同样返回 413，避免在下游响应头已发送后才发现超限。
 
@@ -601,7 +601,7 @@ XHS / 抖音 / YouTube / 知乎 / Reddit / V2EX 的插件任务桥保留两层�
 | `scheduler.trending_refresh_minutes` | `3` | `trending` 策略最小刷新间隔（分钟）。v0.3.186 起单位由小时改为分钟；旧键 `trending_refresh_hours` 读取时按 ×60 换算。 |
 | `scheduler.explore_refresh_minutes` | `3` | `explore` 策略最小刷新间隔；统一关键词 planner 会复用这条 refresh plan 时钟，在到期或距到期不足一个 `refresh_check_interval_seconds` 且 B 站有补货空间时，把探索 query 生成合并进当轮关键词调用。 |
 | `scheduler.discovery_limit` | `30` | 单轮 discovery wave 候选上限，最大 `60`。 |
-| `scheduler.delight_queue_limit` | `20` | 惊喜推荐队列默认加载数量；桌面 Web、移动 Web 和浏览器插件默认共享，范围 `1..100`。 |
+| `scheduler.delight_queue_limit` | `20` | 惊喜推荐队列默认加载数量；桌面 Web、移动 Web 和 NEKO 等可见宿主默认共享，范围 `1..100`。浏览器连接器不读取该队列。 |
 | `scheduler.proactive_push_interval_seconds` | `120` | 主动推荐 / probe 推送循环间隔。 |
 | `scheduler.speculator_idle_interval_minutes` | `30` | 画像 pipeline 空闲时检查猜测兴趣生命周期的间隔。 |
 | `scheduler.avoidance_speculation_interval_minutes` | `10` | 不喜欢领域探针生成间隔。 |
@@ -650,7 +650,7 @@ compare-and-clear 旧 tuple，不能清除 new permit。进程 shutdown 的同�
 - SoulEngine 内部的 preference / awareness / insight / profile_builder / speculator / dialogue_insight 使用同一份 override。
 - SocraticDialogue fallback 若未显式注入 `llm_service`，会继承 `SoulEngine._module_overrides` 再构造 `LLMService`。
 
-`restart_background_tasks()` 在启动后置 one-shot 时通过 `_safe_post_reload_speculate()` 分别调度正向兴趣 speculator 和避雷 speculator，不会 await 两者的 `force_tick()`。正向路径读取 `probe_feedback_history`，避雷路径读取 `avoidance_probe_feedback_history`，让热重载后的首次生成继续避开近期已否认方向。这保证 popup 保存配置的 HTTP 响应不被一次画像猜测卡住；调度本身写 debug 日志，helper 内部吞掉异常，下一轮正常调度仍会继续。
+`restart_background_tasks()` 在启动后置 one-shot 时通过 `_safe_post_reload_speculate()` 分别调度正向兴趣 speculator 和避雷 speculator，不会 await 两者的 `force_tick()`。正向路径读取 `probe_feedback_history`，避雷路径读取 `avoidance_probe_feedback_history`，让热重载后的首次生成继续避开近期已否认方向。这保证桌面设置页保存配置的 HTTP 响应不被一次画像猜测卡住；调度本身写 debug 日志，helper 内部吞掉异常，下一轮正常调度仍会继续。
 
 同一后置 one-shot 还通过 `_safe_post_reload_precompute()` 调度一次 `precompute_pool_copy(profile=...)`（v0.3.124+，lever 2a）：`rebuild_from_config()` 的 `cancel_all` 会连带取消正在跑的 classify_pool_backlog / 文案预计算 / delight 评分，若不补一脚，冷启动期反复保存配置的用户会看到候选池迟迟不填（每次保存都把进度清零、最坏要等到下一个 `refresh_check_interval_seconds` tick）。`precompute_pool_copy` 内部会 detached 再启 classify 与 delight，因此一次调用即在新引擎上重启整条 classify→文案→delight drain；其自带的 `_expression_lock` 保证与 refresh loop 周期 drain 不抢同批，刷新轮询仍是兜底。helper 吞掉异常、不影响 `/api/config` 响应。
 

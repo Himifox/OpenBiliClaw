@@ -65,7 +65,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 
 1. 手机和电脑要在同一个局域网。
 2. 后端要绑定 `0.0.0.0`：桌面包默认如此；源码安装检查 `config.toml` 的 `[api].host`（`0.0.0.0` = 同时监听可用的 IPv4 / IPv6，`127.0.0.1` = 仅本机）。
-3. 用插件顶部手机图标的二维码打开最稳，它会优先展示电脑的 IPv4 局域网地址；没有可用 IPv4 时会回退到 IPv6，并自动生成 `http://[IPv6]:8420/m/` 格式的地址。
+3. 用桌面 Web 顶栏的「手机版」二维码打开最稳，它会优先展示电脑的 IPv4 局域网地址；没有可用 IPv4 时会回退到 IPv6，并自动生成 `http://[IPv6]:8420/m/` 格式的地址。
 
 ## 更新与数据
 
@@ -75,7 +75,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 
 ### 点「立即应用」提示更新未开始 / 被拒绝？
 
-后端自动更新有安全守卫：本地有未提交改动（`dirty_worktree`）、remote 不受信任（`untrusted_remote`）、分支无法快进（`branch_not_fast_forwardable`）等情况会拒绝更新，插件会展示具体原因。源码安装用户可进仓库目录手动处理后重试（如 `git status` 清理本地改动）。
+后端自动更新有安全守卫：本地有未提交改动（`dirty_worktree`）、remote 不受信任（`untrusted_remote`）、分支无法快进（`branch_not_fast_forwardable`）等情况会拒绝更新，桌面设置页会展示具体原因。源码安装用户可进仓库目录手动处理后重试（如 `git status` 清理本地改动）。
 
 ### 点「立即应用」后显示「更新后依赖安装失败」？
 

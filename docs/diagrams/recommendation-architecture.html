@@ -533,7 +533,7 @@
   <rect x="40" y="360" width="1060" height="80" rx="10" fill="#161b22" stroke="#f778ba" stroke-width="1.5"/>
   <text x="64" y="384" fill="#f778ba" font-size="12" font-weight="700">主动 delight 推送 — _loop_proactive_push (每 120s)</text>
   <text x="64" y="406" fill="#8b949e" font-size="10">prepare_delight_candidates (precompute_pool_copy limit=0) → get_pending_delight：动态 min_score · 4h cooldown · 硬过滤 disliked 短语</text>
-  <text x="64" y="424" fill="#8b949e" font-size="10">→ WebSocket 发 delight.candidate (单条，cooldown 门) + delight.refreshed (净新增数) → 插件重取 /api/delight/pending-batch</text>
+  <text x="64" y="424" fill="#8b949e" font-size="10">→ WebSocket 发 delight.candidate + delight.refreshed → 可见宿主展示成功后确认；连接器不消费</text>
 </svg>
 </div>
 
@@ -760,7 +760,7 @@
   <div class="src-head" style="color:#f778ba">F. delight 主动惊喜推送</div>
   <div class="src-body"><ol>
     <li><b>每 120 秒</b>一轮：备好惊喜候选 → <code>get_pending_delight</code>（要求分≥动态阈值、距上次推送≥4 小时冷却、硬过滤掉你已讨厌的话题）。</li>
-    <li><b>推送</b>：通过 WebSocket 给插件发一条 <code>delight.candidate</code>（单条，受冷却约束）和 <code>delight.refreshed</code>（净新增数）。</li>
+    <li><b>推送</b>：通过 WebSocket 给 NEKO 等可见宿主发送 <code>delight.candidate</code>（单条，受冷却约束）和 <code>delight.refreshed</code>（净新增数）；浏览器连接器不会确认未展示内容。</li>
     <li><span class="sub">delight = 主动「惊喜」推荐：不是常规相关推荐，而是跨域、可能戳中你隐藏需求的内容。</span></li>
   </ol></div>
 </div>

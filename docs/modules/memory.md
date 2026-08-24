@@ -109,7 +109,7 @@
 | 多源 bootstrap 去重与周期状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do 已进入事件路径的 bootstrap identity key，每源按响应顺序保留最新 5,000 个；同文件的 `source_incremental` 保存 round-robin cursor、逐源最后真实创建时间和当前 active task。所有写入经 `update_source_bootstrap_state()` 的文件锁 + 原子 replace，避免并发 task-result / scheduler 丢更新 |
 | 多源 bootstrap 去重与周期状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube / 知乎 / Reddit / V2EX 已进入事件路径的 bootstrap identity key，每源按响应顺序保留最新 5,000 个；V2EX key 带后端 resolved username 前缀，账号切换不共用去重集合。同文件的 `source_incremental` 保存 round-robin cursor、逐源最后真实创建时间和当前 active task。所有写入经 `update_source_bootstrap_state()` 的文件锁 + 原子 replace，避免并发 task-result / scheduler 丢更新 |
 | 用户画像覆盖层 | ✅ | `profile_overrides.json` 存用户对画像的手动编辑（文本/标量固定 + 列表/兴趣树增删）；`load/save_profile_overrides` 读写，`sync_profile_files` 渲染人类可读镜像前叠加覆盖层，确保编辑在画像重建后仍反映在 `soul_profile.md/.json` |
-| 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊、兴趣猜测内聊和避雷探针内聊的 pending/completed/failed 状态 |
+| 可见宿主聊天回合 | ✅ | SQLite `chat_turns` 持久化桌面/移动 Web 与 NEKO 的主聊天、惊喜推荐内聊、兴趣猜测内聊和避雷探针内聊的 pending/completed/failed 状态；历史 `session="popup"` 名仅作数据兼容 |
 | JSON 状态原子读写 | ✅ | `memory/json_state.py` 提供共享同一进程内锁/跨进程文件锁的 `read_json_state()` 与 `update_json_state()`，写侧再以 `os.replace` 发布；`discovery_runtime.json` 的 probe 反馈历史、冷却 map、短期探索 buffer 等运行态通过 mutator 更新并合并旧快照，避免安装包常驻进程/后台任务并发保存时丢掉用户点击反馈。对话锚在 LLM 返回后的 ref+generation 二次校验使用锁内读，因此不会观察到写到一半的代次。 |
 
 > `MemoryManager.propagate_event()` / `propagate_events()` 的职责边界是“落事实”：校验事件类型、补默认信号强度并写入 SQLite。storage 会在同一事务内把 `view` 的 canonical identity upsert 到 `seen_items`，这是推荐去重索引，不是画像推断。单条和批量版本都通过 `asyncio.to_thread` 进入 storage；前者每事件一条独立短连接事务，后者把整批初始化事件交给一条独立连接的单事务接口，二者都避免 SQLite busy wait 阻塞 API loop。生产 HTTP/source 入口统一由 `EventIngressService` 写 durable receipt 并 wake；初始化后的画像增量由 app-owned `EventProcessingScheduler` 的 generic/content-feedback consumers 按各自 cursor 扫描，在 `ProfileUpdatePipeline.checkpointed_enqueue_batch()` 中把 buffer+cursor 原子发布到同一份 `pipeline_state.json`，再调用 `tick_if_buffered()`。独立周期画像维护才调用完整 `tick()`；memory 层仍不会隐式触发偏好、觉察、洞察或 Soul 刷新。
@@ -166,7 +166,7 @@ stats = memory.get_event_stats()  # {"view": 42, "search": 7, ...}
 # feedback；hypothesis/import feedback 与 retraction 都只越过。API generic
 # pipeline 仍消费 live retraction 做折价——撤销是"中和"，不是负偏好。
 
-# 插件 side panel 的 durable chat turn 由 Database 管理：
+# 可见宿主共用的 durable chat turn 由 Database 管理；session 名保留 popup 仅为兼容：
 from openbiliclaw.storage.database import Database
 
 database = Database(Path("data/openbiliclaw.db"))
@@ -262,7 +262,7 @@ account_sync_state = memory.load_account_sync_state()
 #   "following_mids": ["99"],
 #   "last_account_sync_at": "2026-03-14T12:05:00+00:00",
 #   "last_sync_error": "",
-#   "last_sync_error_kind": "",  # "auth_expired" 驱动三端的“需重新登录”呈现
+#   "last_sync_error_kind": "",  # "auth_expired" 驱动可见客户端的“需重新登录”呈现
 #   "last_sync_issues": [
 #       {"stage": "bilibili_favorites", "kind": "timeout"},
 #   ],
@@ -429,7 +429,7 @@ data/memory/
 ├── discovery_runtime.json      # 候选池刷新游标
 ├── avoidance_state.json        # 不喜欢领域探针 active/cooldown 状态
 ├── insight_candidates.json     # 聊天候选洞察（中间态）
-└── cognition_updates.json      # 认知变化记录（供插件通知）
+└── cognition_updates.json      # 认知变化记录（供可见宿主与画像页读取）
 ```
 
 | 文件 | 用途 | 主要消费者 |
@@ -441,7 +441,7 @@ data/memory/
 | `discovery_runtime.json` | 候选池刷新时间、通知游标、最近话题、近期 probe domain / axis / distance 历史、显式 probe feedback 历史、短期探索 buffer | RefreshController / OpenClaw / FastAPI |
 | `avoidance_state.json` | 不喜欢领域探针的 active/cooldown 列表和生命周期状态 | AvoidanceSpeculator / FastAPI |
 | `insight_candidates.json` | 聊天中提取的候选洞察，等待置信度达标 | SoulEngine |
-| `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → 浏览器插件通知 |
+| `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → NEKO / Web 可见界面 |
 
 设计原则：每种状态独立文件，不和画像数据混存。
 
@@ -497,9 +497,9 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 8. **插件事件兼容**：事件层白名单已扩到插件采集事件，避免 `/api/events` 在 `snapshot`、`scroll`、`hover`、`seek` 等行为上拒收
 9. **反馈状态独立持久化**：`feedback_state.json` 单独保存反馈处理游标，以及 `feedback_owner_version` / `feedback_owner_cutover_at` 升级边界；写入使用 tmp + fsync + `os.replace`，让 cursor 与 owner fence 同时发布，避免把运行状态塞进 `preference.json` 或 `soul.json`
 10. **聊天候选与正式画像分层**：聊天提取出的 `insight_candidates.json` 先作为中间状态保留，不直接覆盖 `soul.json`
-11. **插件聊天回合独立持久化**：`chat_turns` 只保存 side panel durable turn 的请求、回复和状态，解决 Chrome side panel reload / discard 时 DOM 和 JS 内存丢失的问题；它不替代事件层学习，完成后的 dialogue/cognition 仍按后端流程受控进入画像链路
+11. **可见宿主聊天回合独立持久化**：`chat_turns` 保存桌面/移动 Web 与 NEKO durable turn 的请求、回复和状态；历史 `session="popup"` 名继续兼容既有数据。它不替代事件层学习，完成后的 dialogue/cognition 仍按后端流程受控进入画像链路
 12. **候选池运行状态分层**：`discovery_runtime.json` 只负责刷新与通知游标，不与 `feedback_state.json`、`insight_candidates.json` 或画像数据混存
-13. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，既供插件通知使用，也让画像页能回显”最近记住了什么”
+13. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，供 NEKO 或其它真实可见宿主提示，也让画像页回显“最近记住了什么”
 14. **账户同步状态单独持久化**：`account_sync_state.json` 记录 history / favorites / following 的增量游标、已见 ID 集合、稳定签名与有界的 `{stage,kind}` 错误清单，既避免每轮全量重灌事件层和同秒历史游标导致重复画像分析，也让 runtime-status 无需解析原始异常文本即可定位失败环节
 15. **多源 bootstrap 去重与调度状态独立持久化**：`source_bootstrap_state.json` 保存 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do 已见 bootstrap identity key（每源最新 5,000）及 `source_incremental` 调度投影，不塞进画像 JSON；`update_source_bootstrap_state(mutator)` 在同一进程锁、跨进程文件锁内读改写并以 `os.replace` 发布。task-result 保留首份 canonical 原始结果，durable ingress 成功后再按响应顺序写 seen-key，失败时不翻 terminal，可由租约重领修复
 15. **多源 bootstrap 去重与调度状态独立持久化**：`source_bootstrap_state.json` 保存 XHS / 抖音 / YouTube / 知乎 / Reddit / V2EX 已见 bootstrap identity key（每源最新 5,000）及 `source_incremental` 调度投影，不塞进画像 JSON；V2EX key 额外按 resolved username 隔离。`update_source_bootstrap_state(mutator)` 在同一进程锁、跨进程文件锁内读改写并以 `os.replace` 发布。task-result 保留首份 canonical 原始结果，durable ingress 成功后再按响应顺序写 seen-key，失败时不翻 terminal，可由租约重领修复；V2EX 收藏撤回作为 `feedback/retraction` 弱证据进入同一事件层，折价历史 positive 而不删除事实

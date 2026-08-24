@@ -1252,7 +1252,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
           <div class="note">
             <h3 data-i18n="mobileInstallNoteTitle">手机桌面快捷入口</h3>
             <p data-i18n="mobileInstallNoteText">
-              后端允许局域网访问后，点击插件顶部手机图标扫码打开 /m/。iPhone / iPad 用 Safari「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；HTTPS 反代下完整 PWA 安装提示更稳定。
+              后端允许局域网访问后，在手机浏览器打开 http://&lt;电脑局域网 IP&gt;:8420/m/。iPhone / iPad 用 Safari「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；HTTPS 反代下完整 PWA 安装提示更稳定。
             </p>
           </div>
 
@@ -1608,7 +1608,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         pluginNoteTitle: "浏览器插件负责连接平台",
         pluginNoteText: "浏览器插件是轻量连接器：侧栏只显示后端连接、当前来源、身份同步和主应用入口；推荐、内容库、画像、对话与完整设置统一放在桌面 / 移动主应用。插件仍负责平台登录态、行为信号，并为 Linux.do / V2EX / 微博等来源执行有界只读任务；微博公开 discovery 由后端完成，个人初始化才打开微博同源任务页，Cookie 不回传。最新版可从 GitHub Latest Release 下载同版本 Chrome / Firefox 包，或使用审核通过后自动更新的插件市场版本。",
         mobileInstallNoteTitle: "手机桌面快捷入口",
-        mobileInstallNoteText: "后端允许局域网访问后，点击插件顶部手机图标扫码打开 /m/。iPhone / iPad 用 Safari「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；HTTPS 反代下完整 PWA 安装提示更稳定。",
+        mobileInstallNoteText: "后端允许局域网访问后，在手机浏览器打开 http://<电脑局域网 IP>:8420/m/。iPhone / iPad 用 Safari「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；HTTPS 反代下完整 PWA 安装提示更稳定。",
         flutterNoteTitle: "Flutter 原生客户端",
         flutterNoteText: "想要原生 App？独立仓库 OpenBiliClaw-mobile（Flutter）提供 Android / iOS / Web / Linux / macOS / Windows 客户端，在设置里填后端 IP / 端口即可连接同一本地后端；推荐、对话、画像、收藏与 30 天历史、消息收件箱齐全，B 站封面 CDN 直连省两跳。Android 签名 APK 与 iOS 自签名 IPA 见 Latest Release：https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest",
         dshNoteTitle: "DeepSeek Harness 客户端插件",
@@ -1769,7 +1769,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         pluginNoteTitle: "The browser extension connects platforms",
         pluginNoteText: "The browser extension is a lightweight connector: its compact panel shows backend connectivity, the current source, identity sync, and a link to the main app. Recommendations, library, profile, chat, and full settings live in the desktop and mobile apps. The extension still owns platform sessions, behavior signals, and bounded read-only tasks for sources including Linux.do, V2EX, and Weibo. Weibo public discovery stays backend-owned; personal init uses a same-origin task tab and never sends cookies to the backend. Download matching Chrome / Firefox packages from the GitHub Latest Release or use the marketplace build after review approval.",
         mobileInstallNoteTitle: "Phone home-screen shortcut",
-        mobileInstallNoteText: "After enabling LAN access for the backend, click the phone icon in the extension header and scan the QR code for /m/. On iPhone / iPad, open Safari's Share menu and choose Add to Home Screen; on Android Chrome / Chromium browsers, use Install app or Add to Home screen. LAN HTTP may only create a shortcut in some Android browsers; full PWA install prompts are more reliable behind an HTTPS reverse proxy.",
+        mobileInstallNoteText: "After enabling LAN access for the backend, open http://<your-LAN-IP>:8420/m/ in your phone browser. On iPhone / iPad, open Safari's Share menu and choose Add to Home Screen; on Android Chrome / Chromium browsers, use Install app or Add to Home screen. LAN HTTP may only create a shortcut in some Android browsers; full PWA install prompts are more reliable behind an HTTPS reverse proxy.",
         flutterNoteTitle: "Native Flutter client",
         flutterNoteText: "Want a native app? The separate repo OpenBiliClaw-mobile (Flutter) ships Android / iOS / Web / Linux / macOS / Windows clients that connect to the same local backend from its settings — recommendations, chat, profile, favorites / watch-later / 30-day history, and an inbox, with Bilibili covers loading directly from the CDN. Signed Android APKs and a self-signing iOS IPA are on the Latest Release: https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest",
         dshNoteTitle: "DeepSeek Harness client plugin",
