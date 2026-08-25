@@ -11,6 +11,7 @@ from openbiliclaw import OpenBiliClawCore
 from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.recommendation.engine import Recommendation
 from openbiliclaw.recommendation.proactive_candidate import build_proactive_candidates
+from openbiliclaw.runtime.maintenance_policy import MaintenancePolicy
 from openbiliclaw.saved_sync.models import SavedItemInput
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
@@ -315,6 +316,8 @@ async def test_core_exposes_bounded_proactive_preview_without_http() -> None:
         soul_engine=_Soul(),
         recommendation_engine=_Engine(),
         database=_EvidenceDatabase(),
+        surface_copy_mode="lazy",
+        maintenance_policy=MaintenancePolicy.embedded_proactive(),
         degraded=False,
     )
     core = OpenBiliClawCore.from_context(context)  # type: ignore[arg-type]
@@ -333,3 +336,16 @@ async def test_core_exposes_bounded_proactive_preview_without_http() -> None:
             "excluded_bvids": frozenset(),
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_proactive_preview_fails_closed_without_bounded_host_policy() -> None:
+    context = SimpleNamespace(
+        surface_copy_mode="background",
+        maintenance_policy=None,
+        degraded=False,
+    )
+    core = OpenBiliClawCore.from_context(context)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="bounded lazy"):
+        await core.preview_proactive_candidates()

@@ -4,11 +4,13 @@
 
 `soul.awareness_confusions` 的可选 `bounded-v2` 使用 UTF-8 字节数作为 tokenizer-independent 保守输入上界：按完整 activity envelope 装箱，不能为凑预算拆散同一内容/作者的一组事件。调用日志只记录分段体积、事件数、envelope 数和 manifest 摘要，不打印标题、作者、画像或事件正文。默认仍为 `compact-v1`；provider/model 变化后必须重校准 24k/32k 阈值并通过语义质量回放，不能只凭 token 下降启用。
 
-NEKO 宿主可注入 `BackgroundTokenBudget`。共享 `LLMService` 在 provider admission 前
-保守估算输入，并结合 SQLite 同日本地 caller 汇总和进程内并发预留执行硬门禁：每日
-总计 100k，Discovery/Recommendation/Soul 分别 50k/20k/30k。NEKO usage 是实际计费
-总账，OBC caller 只作内部拆分，二者不得相加；正常 NEKO Phase 1/2 与
-`soul.dialogue.tools` 不计入 OBC 后台预算。
+NEKO 的 bounded lazy Core 使用 `BackgroundTokenBudget`。共享 `LLMService` 在 provider
+admission 前保守估算输入、按请求 `max_tokens` 预留最坏输出，并结合 SQLite 同日本地
+caller 汇总和进程内并发预留执行硬门禁：每日后台输入总计 100k，
+Discovery/Recommendation/Soul 分别 50k/20k/30k；后台输出总计 20k。持久用量和并发
+预留任一侧越界都在 provider 前失败。全局后台口径只汇总能归属这三个后台组的 caller，
+`soul.dialogue.tools` 与 `embedded.proactive.phase1/phase2` 虽写入同一计费台账，但不会
+挤占 OBC 后台余量。
 
 热重载不会替换 gate 对象，而是原地 `reconfigure()`：升容立即按优先级唤醒等待者；降容不撤销已进入 provider 的工作，并在 active 降到新容量以下前停止新准入。配置探测使用 `api.config_probe` 交互分类，只经过 total gate：即使 canonical inventory 为空，用户仍能测试并修复阻塞初始化的模型配置，但探测不会绕过总 provider 并发上限。
 

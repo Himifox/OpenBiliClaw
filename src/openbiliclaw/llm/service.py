@@ -279,12 +279,17 @@ class LLMService:
         *,
         caller: str,
         messages: list[dict[str, Any]],
+        max_output_tokens: int,
     ) -> object | None:
         budget = self.background_token_budget
         reserve = getattr(budget, "reserve", None)
         if not callable(reserve):
             return None
-        return await reserve(caller=caller, messages=messages)
+        return await reserve(
+            caller=caller,
+            messages=messages,
+            max_output_tokens=max_output_tokens,
+        )
 
     async def _release_background_tokens(self, reservation: object | None) -> None:
         budget = self.background_token_budget
@@ -583,6 +588,7 @@ class LLMService:
         reservation = await self._reserve_background_tokens(
             caller=caller,
             messages=cast("list[dict[str, Any]]", messages),
+            max_output_tokens=max_tokens,
         )
         try:
             async with self._provider_slot(
@@ -776,6 +782,7 @@ class LLMService:
         reservation = await self._reserve_background_tokens(
             caller=caller,
             messages=messages,
+            max_output_tokens=max_tokens,
         )
         try:
             async with self._provider_slot(caller=caller):

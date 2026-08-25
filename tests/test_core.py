@@ -41,9 +41,14 @@ class _Client:
 class _Database:
     def __init__(self) -> None:
         self.closed = False
+        self.usage_rows: list[dict[str, Any]] = []
 
     def close(self) -> None:
         self.closed = True
+
+    def insert_llm_usage(self, **kwargs: Any) -> int:
+        self.usage_rows.append(kwargs)
+        return len(self.usage_rows)
 
 
 class _Soul:
@@ -215,8 +220,10 @@ def test_core_create_forwards_host_llm_provider_overrides(
     from openbiliclaw.runtime.maintenance_policy import MaintenancePolicy
 
     provider = object()
+
     def transform(config: Config) -> Config:
         return config
+
     context = _Context()
     captured: dict[str, Any] = {}
     maintenance_policy = MaintenancePolicy(
@@ -245,6 +252,74 @@ def test_core_create_forwards_host_llm_provider_overrides(
     assert captured["llm_provider_overrides"] == {"neko-conversation": provider}
     assert captured["host_config_transform"] is transform
     assert captured["maintenance_policy"] is maintenance_policy
+
+
+def test_lazy_core_create_injects_bounded_proactive_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.api import runtime_context as runtime_context_module
+    from openbiliclaw.config import Config
+
+    context = _Context()
+    captured: dict[str, Any] = {}
+
+    def _build(config: Any, **kwargs: Any) -> _Context:
+        captured.update(kwargs)
+        context.config = config
+        return context
+
+    monkeypatch.setattr(runtime_context_module, "build_runtime_context", _build)
+    monkeypatch.setattr(OpenBiliClawCore, "_configure_process_runtime", lambda config: None)
+
+    OpenBiliClawCore.create(Config(), surface_copy_mode="lazy")
+
+    policy = captured["maintenance_policy"]
+    assert policy.is_proactive_bounded is True
+    assert policy.daily_input_token_budget == 100_000
+    assert policy.daily_output_token_budget == 20_000
+
+
+@pytest.mark.asyncio
+async def test_core_records_host_owned_proactive_phase_usage() -> None:
+    context = _Context()
+    core = OpenBiliClawCore.from_context(context)  # type: ignore[arg-type]
+
+    row_id = await core.record_proactive_llm_usage(
+        phase="phase2",
+        provider="openai",
+        model="gpt-5-nano",
+        prompt_tokens=120,
+        completion_tokens=30,
+        cached_input_tokens=20,
+    )
+
+    assert row_id == 1
+    assert context.database.usage_rows == [
+        {
+            "provider": "openai",
+            "model": "gpt-5-nano",
+            "caller": "embedded.proactive.phase2",
+            "prompt_tokens": 120,
+            "completion_tokens": 30,
+            "cached_input_tokens": 20,
+            "estimated_cost_cny": pytest.approx(0.000126),
+            "success": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_core_rejects_invalid_proactive_usage() -> None:
+    core = OpenBiliClawCore.from_context(_Context())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="phase"):
+        await core.record_proactive_llm_usage(
+            phase="phase3",  # type: ignore[arg-type]
+            provider="openai",
+            model="gpt-5-nano",
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
 
 
 @pytest.mark.asyncio
@@ -347,12 +422,13 @@ async def test_core_exposes_host_facing_operations_without_http() -> None:
             "excluded_bvids": frozenset(),
         }
     ]
-    assert await core.record_recommendation_delivery(  # type: ignore[arg-type]
-        previews[0],
-        surface="neko_proactive",
-    ) == 41
-    assert context.recommendation_engine.delivered == [
-        (previews[0], "neko_proactive")
-    ]
+    assert (
+        await core.record_recommendation_delivery(  # type: ignore[arg-type]
+            previews[0],
+            surface="neko_proactive",
+        )
+        == 41
+    )
+    assert context.recommendation_engine.delivered == [(previews[0], "neko_proactive")]
     await core.publish_event({"type": "host.ready"})
     assert context.event_hub.items == [{"type": "host.ready"}]

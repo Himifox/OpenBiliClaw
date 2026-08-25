@@ -34,17 +34,7 @@ class _Registry:
 
 
 def test_embedded_policy_supports_bounded_inventory_and_daily_budget() -> None:
-    policy = MaintenancePolicy(
-        pool_capacity=30,
-        ready_soft_target=10,
-        ready_stop_threshold=4,
-        refill_batch_size=10,
-        refill_cooldown_seconds=15 * 60,
-        daily_input_token_budget=100_000,
-        discovery_daily_input_budget=50_000,
-        recommendation_daily_input_budget=20_000,
-        soul_daily_input_budget=30_000,
-    )
+    policy = MaintenancePolicy.embedded_proactive()
 
     assert policy.pool_capacity == 30
     assert policy.ready_soft_target == 10
@@ -54,6 +44,11 @@ def test_embedded_policy_supports_bounded_inventory_and_daily_budget() -> None:
     assert policy.discovery_daily_input_budget == 50_000
     assert policy.recommendation_daily_input_budget == 20_000
     assert policy.soul_daily_input_budget == 30_000
+    assert policy.daily_output_token_budget == 20_000
+    assert policy.discovery_daily_output_budget is None
+    assert policy.recommendation_daily_output_budget is None
+    assert policy.soul_daily_output_budget is None
+    assert policy.is_proactive_bounded is True
 
 
 def test_policy_rejects_module_budgets_above_total() -> None:
@@ -62,6 +57,13 @@ def test_policy_rejects_module_budgets_above_total() -> None:
             daily_input_token_budget=10,
             discovery_daily_input_budget=6,
             recommendation_daily_input_budget=5,
+        )
+
+    with pytest.raises(ValueError, match="cannot exceed"):
+        MaintenancePolicy(
+            daily_output_token_budget=10,
+            discovery_daily_output_budget=6,
+            recommendation_daily_output_budget=5,
         )
 
 
@@ -73,9 +75,7 @@ async def test_budget_counts_persisted_usage_before_provider_admission() -> None
         recommendation_daily_input_budget=20,
         soul_daily_input_budget=20,
     )
-    sink = _UsageSink(
-        [{"caller": "discovery.evaluate_batch", "prompt_tokens": 55}]
-    )
+    sink = _UsageSink([{"caller": "discovery.evaluate_batch", "prompt_tokens": 55}])
     budget = BackgroundTokenBudget(sink, policy)
 
     with pytest.raises(BackgroundTokenBudgetExceededError, match="discovery"):
@@ -107,10 +107,91 @@ async def test_budget_reservations_prevent_concurrent_oversubscription() -> None
             messages=messages,
         )
     await budget.release(reservation)
-    assert await budget.reserve(
+    assert (
+        await budget.reserve(
+            caller="discovery.evaluate_batch",
+            messages=messages,
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
+async def test_interactive_usage_does_not_reduce_background_total() -> None:
+    policy = MaintenancePolicy(
+        daily_input_token_budget=50,
+        discovery_daily_input_budget=50,
+    )
+    sink = _UsageSink([{"caller": "soul.dialogue.tools", "prompt_tokens": 10_000}])
+    budget = BackgroundTokenBudget(sink, policy)
+
+    assert (
+        await budget.reserve(
+            caller="discovery.evaluate_batch",
+            messages=[{"role": "user", "content": "short"}],
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
+async def test_output_budget_blocks_on_persisted_completion_tokens() -> None:
+    policy = MaintenancePolicy(
+        daily_input_token_budget=1_000,
+        discovery_daily_input_budget=1_000,
+        daily_output_token_budget=10,
+        discovery_daily_output_budget=10,
+    )
+    sink = _UsageSink(
+        [
+            {
+                "caller": "discovery.evaluate_batch",
+                "prompt_tokens": 1,
+                "completion_tokens": 10,
+            }
+        ]
+    )
+    budget = BackgroundTokenBudget(sink, policy)
+
+    with pytest.raises(BackgroundTokenBudgetExceededError, match="output"):
+        await budget.reserve(
+            caller="discovery.evaluate_batch",
+            messages=[{"role": "user", "content": "short"}],
+            max_output_tokens=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_output_reservations_prevent_concurrent_oversubscription() -> None:
+    policy = MaintenancePolicy(
+        daily_input_token_budget=1_000,
+        discovery_daily_input_budget=1_000,
+        daily_output_token_budget=10,
+        discovery_daily_output_budget=10,
+    )
+    budget = BackgroundTokenBudget(_UsageSink(), policy)
+    messages = [{"role": "user", "content": "short"}]
+
+    reservation = await budget.reserve(
         caller="discovery.evaluate_batch",
         messages=messages,
-    ) is not None
+        max_output_tokens=6,
+    )
+    with pytest.raises(BackgroundTokenBudgetExceededError, match="output"):
+        await budget.reserve(
+            caller="discovery.evaluate_batch",
+            messages=messages,
+            max_output_tokens=6,
+        )
+    await budget.release(reservation)
+    assert (
+        await budget.reserve(
+            caller="discovery.evaluate_batch",
+            messages=messages,
+            max_output_tokens=6,
+        )
+        is not None
+    )
 
 
 def test_user_facing_dialogue_is_not_charged_to_background_budget() -> None:
@@ -126,9 +207,7 @@ async def test_llm_service_blocks_before_calling_provider() -> None:
         recommendation_daily_input_budget=20,
         soul_daily_input_budget=30,
     )
-    sink = _UsageSink(
-        [{"caller": "discovery.evaluate_batch", "prompt_tokens": 50}]
-    )
+    sink = _UsageSink([{"caller": "discovery.evaluate_batch", "prompt_tokens": 50}])
     registry = _Registry()
     service = LLMService(
         registry=registry,  # type: ignore[arg-type]

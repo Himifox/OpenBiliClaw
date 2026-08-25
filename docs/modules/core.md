@@ -29,6 +29,9 @@ The stable host-facing surface is:
 - `preview_proactive_candidates(limit<=3, explicit_context_texts=...)` for a
   privacy-bounded, non-consuming proactive handoff with separate tracking,
   semantic, and policy layers;
+- `record_proactive_llm_usage(phase="phase1"|"phase2", ...)` for appending
+  provider-reported host usage to the same local `llm_usage` ledger under
+  `embedded.proactive.phase1` / `embedded.proactive.phase2`;
 - `context` as an explicit compatibility escape hatch for capabilities not yet
   promoted to the public Core API.
 
@@ -49,12 +52,18 @@ periodic pool maintenance, candidate admission, and refresh completion may still
 classify semantic candidates, but cannot fall back to background expression-copy
 generation. An explicit `recommend()` call still generates and caches copy before
 recording delivery. Hot reload preserves this host-owned mode.
-`maintenance_policy` is another reload-stable host control. NEKO injects a
-demand-driven policy with active capacity 30, soft target 10, refill only below
-4 ready candidates, one worker and at most 10 candidates per batch. It also
-enforces a persistent 100,000-token daily OBC background input ceiling split
-50k/20k/30k across Discovery/Recommendation/Soul. Capacity is never treated as
-a startup fill target.
+`maintenance_policy` is another reload-stable host control. A lazy Core now
+installs `MaintenancePolicy.embedded_proactive()` when the host omits a policy,
+and rejects an explicitly unbounded lazy policy. The preset keeps active
+capacity 30, soft target 10, refill only below 4 ready candidates, one worker
+and at most 10 candidates per batch. It enforces a persistent 100,000-token
+daily OBC background input ceiling split 50k/20k/30k across
+Discovery/Recommendation/Soul plus a 20,000-token background output ceiling.
+The output ceiling was calibrated from the 2026-08-18 local background high
+water mark (13,840 completion tokens) and must be revisited after a provider or
+model swap. Capacity is never treated as a startup fill target. Proactive
+preview checks this bounded lazy contract again and fails before reading a
+candidate if an injected context bypassed `create()`.
 If the LLM registry cannot be built, the default `allow_degraded=True` creates a
 recovery-capable Core. Set it to `False` when an embedding host prefers startup
 to fail immediately. `reload()` never moves a live database: changing
@@ -77,7 +86,9 @@ profile, recommendation, and dialogue services stay inside Core.
 
 1. Construct one Core per local OpenBiliClaw data directory and inject the
    NEKO-managed provider under the configured OpenBiliClaw instance ID.
-   Inject a host-owned `MaintenancePolicy` with `surface_copy_mode="lazy"`.
+   Select `surface_copy_mode="lazy"`. Core installs the canonical bounded
+   proactive policy automatically; a host may inject a stricter fully bounded
+   policy.
 2. Enter its async lifecycle from NEKO's process supervisor.
 3. Read `preview_proactive_candidates()` before NEKO Phase 1. Preview only reads
    semantic-ready canonical pool rows: it does not refresh sources, call an LLM,
@@ -88,7 +99,10 @@ profile, recommendation, and dialogue services stay inside Core.
    summary-quality components; a non-empty but weak summary still fails closed.
 4. Let NEKO's existing Phase 1 choose a candidate and Phase 2 generate the only
    user-visible character line. Do not call `core.chat()` from NEKO's normal or
-   proactive conversation path.
+   proactive conversation path. After each provider response, pass its actual
+   input/output/cache counters to `record_proactive_llm_usage()`; these rows are
+   visible through the existing `cost --by caller` report but do not consume the
+   OBC background allowance.
 5. Only after successful delivery, pass the selected object to
    `record_recommendation_delivery()`. `[PASS]`, interruption, rejection, and
    delivery failure must not record it as shown.
@@ -112,8 +126,8 @@ and starts Core again, the extension resumes delivery automatically.
 
 - `create()`, `start()`, `stop()`, `reload()`, `get_profile()`, `recommend()`,
   `preview_recommendations()`, `preview_proactive_candidates()`,
-  `record_recommendation_delivery()`, `chat()`, and `publish_event()` remain the
-  stable public surface.
+  `record_proactive_llm_usage()`, `record_recommendation_delivery()`, `chat()`,
+  and `publish_event()` remain the stable public surface.
 - Direct host calls do not loop back through HTTP; FastAPI wraps the same Core.
 - Core owns runtime background tasks, while repeated `start()` / `stop()` and
   shutdown paths are lifecycle-safe and do not duplicate task ownership.

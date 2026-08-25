@@ -41,8 +41,11 @@ NEKO uses `surface_copy_mode="lazy"`, eliminating background duplicate copy
 without moving quality, relevance, temporal, or sensitive-topic decisions out
 of OBC. Phase 2 sees only the selected four-field semantic view.
 Embedded maintenance keeps a 30-candidate active capacity, refills at most 10
-only below four ready candidates, and enforces a persistent 100k daily input-token
-ceiling for OBC background work. Capacity is never filled eagerly at startup.
+only below four ready candidates, and enforces persistent 100k input-token and
+20k output-token daily ceilings for OBC background work. Lazy Core installs the
+gate before background startup. Actual NEKO Phase 1/2 usage is written to the
+same ledger without consuming the background allowance. Capacity is never
+filled eagerly at startup.
 Discovery independently scores summary reliability in that same evaluation call;
 a present but vague or unverifiable summary is still withheld from Phase 1, with no extra model call.
 bounded candidates; Phase 2 sees only the selected title, topic, summary, and

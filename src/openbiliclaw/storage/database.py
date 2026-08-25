@@ -4737,13 +4737,14 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
 
     def query_llm_usage_today_by_caller(self) -> list[dict[str, Any]]:
-        """Return caller input totals for the current local calendar day."""
+        """Return caller input/output totals for the current local calendar day."""
 
         cursor = self.conn.execute(
             """
             SELECT COALESCE(caller, '') AS caller,
                    COUNT(*) AS calls,
-                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS completion_tokens
             FROM llm_usage
             WHERE date(timestamp, 'localtime') = date('now', 'localtime')
             GROUP BY caller

@@ -6,6 +6,13 @@
 
 ## 未发布
 
+- **NEKO 主动搭话 Token 边界收口**：lazy Core 在 runtime 构造前自动安装
+  `MaintenancePolicy.embedded_proactive()`，主动候选入口对 unbounded context 再次失败关闭；
+  OBC 后台仍按 100k 输入（50k/20k/30k）计量，并新增 20k 输出硬门禁与并发最坏输出预留。
+  后台总额只统计 Discovery/Recommendation/Soul caller，普通交互不再挤占余额；Core 新增
+  `record_proactive_llm_usage()`，NEKO Phase 1/2 的实际输入、输出、缓存 Token 和估算费用以
+  独立 caller 写入同一 `llm_usage`，现有 cost 报表即可审计。
+
 - **浏览器连接器边界完成清理**：删除 background 对普通推荐通知和认知更新的后台轮询与静默确认，移除失效的 popup `recommend/profile/chat/delight` 深链、旧通知模块及 Chrome/Firefox `notifications` 权限。插件模块文档重写为当前连接器架构，并同步清除 README、架构、规格、隐私与来源接入指南中的旧 popup 推荐、聊天、画像、初始化和二维码说明。
 
 - **NEKO 成为主动搭话的唯一交付者**：轻量浏览器连接器收到

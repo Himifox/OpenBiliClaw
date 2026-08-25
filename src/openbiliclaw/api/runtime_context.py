@@ -761,7 +761,10 @@ class RuntimeContext:
         background_token_budget = (
             BackgroundTokenBudget(self.database, maintenance_policy)
             if maintenance_policy is not None
-            and getattr(maintenance_policy, "daily_input_token_budget", None) is not None
+            and (
+                getattr(maintenance_policy, "daily_input_token_budget", None) is not None
+                or getattr(maintenance_policy, "daily_output_token_budget", None) is not None
+            )
             else None
         )
         new_module_overrides = module_overrides_from_config(new_config)

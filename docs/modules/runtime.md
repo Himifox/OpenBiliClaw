@@ -8,6 +8,11 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 `create_app()` 的显式依赖注入路径会先核对 Soul 内部 service 与 runtime controller 的 gate：单侧提供时采用该对象并补齐另一侧，两侧同对象时直接采用，两侧不同则立即抛出清晰错误；旧测试 double 都未暴露 gate 时才按配置创建一套新的共享对象。采用外部 gate 时不会先按配置静默改写其容量，后续正常热重载仍在该对象上显式 reconfigure。
 
+内嵌 lazy Core 没有显式策略时会在构造 `RuntimeContext` 前安装
+`MaintenancePolicy.embedded_proactive()`；因此后台循环第一次启动前就已具备 100k 输入、
+20k 输出和库存补货边界。热重载继续保留同一策略。直接注入 context 绕过 Core 构造的
+测试/宿主仍会在主动候选预览入口再次校验，缺失 bounded lazy 契约时失败关闭。
+
 同一核对还覆盖显式 `dialogue` 的 declared/service gate、recommendation service，以及 runtime controller / account-sync 内可见的 Soul、recommendation、discovery service；任何非空身份冲突都在写回前失败。真实 `SocraticDialogue` 的显式 service 与 `_build_service()` fallback 最终都引用 context gate；没有相关属性的旧 double 继续兼容。
 
 实现读取真实引擎字段：Soul / Dialogue / Discovery 为 `_llm_service`，Recommendation 为 `_llm`，AccountSync 为 `soul_engine`；参数化结构测试会在这些类改名但注入审计未同步时失败。

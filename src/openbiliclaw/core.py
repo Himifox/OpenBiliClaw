@@ -82,6 +82,14 @@ class OpenBiliClawCore:
 
         if surface_copy_mode not in {"background", "lazy"}:
             raise ValueError("surface_copy_mode must be 'background' or 'lazy'")
+        if surface_copy_mode == "lazy" and maintenance_policy is None:
+            from openbiliclaw.runtime.maintenance_policy import MaintenancePolicy
+
+            maintenance_policy = MaintenancePolicy.embedded_proactive()
+        if surface_copy_mode == "lazy" and not bool(
+            getattr(maintenance_policy, "is_proactive_bounded", False)
+        ):
+            raise ValueError("lazy Core requires a bounded proactive maintenance policy")
         runtime_config = config or load_config()
         cls._configure_process_runtime(runtime_config)
         owns_database = database is None
@@ -261,6 +269,15 @@ class OpenBiliClawCore:
             build_proactive_candidates,
         )
 
+        if getattr(self.context, "surface_copy_mode", "background") != "lazy" or not bool(
+            getattr(
+                getattr(self.context, "maintenance_policy", None),
+                "is_proactive_bounded",
+                False,
+            )
+        ):
+            raise RuntimeError("proactive preview requires a bounded lazy embedded Core")
+
         profile = await self.get_profile()
         recommendations = cast(
             "list[Recommendation]",
@@ -276,6 +293,61 @@ class OpenBiliClawCore:
             profile=profile,
             database=self._require_service("database"),
             explicit_context_texts=explicit_context_texts[-3:],
+        )
+
+    async def record_proactive_llm_usage(
+        self,
+        *,
+        phase: Literal["phase1", "phase2"],
+        provider: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cached_input_tokens: int = 0,
+    ) -> int:
+        """Append one host-owned proactive model call to the shared ledger."""
+        from openbiliclaw.llm.pricing import estimate_cost
+
+        if phase not in {"phase1", "phase2"}:
+            raise ValueError("phase must be 'phase1' or 'phase2'")
+        clean_provider = provider.strip().lower()
+        clean_model = model.strip()
+        if not clean_provider:
+            raise ValueError("provider must not be empty")
+        if not clean_model:
+            raise ValueError("model must not be empty")
+        tokens = (prompt_tokens, completion_tokens, cached_input_tokens)
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in tokens
+        ):
+            raise ValueError("token counts must be non-negative integers")
+        prompt = int(prompt_tokens)
+        completion = int(completion_tokens)
+        cached = int(cached_input_tokens)
+        if cached > prompt:
+            raise ValueError("cached_input_tokens cannot exceed prompt_tokens")
+        cost = estimate_cost(
+            clean_provider,
+            clean_model,
+            prompt,
+            completion,
+            cached_tokens=cached,
+        )
+        insert = getattr(self._require_service("database"), "insert_llm_usage", None)
+        if not callable(insert):
+            raise RuntimeError("Core database does not support LLM usage recording")
+        return int(
+            await asyncio.to_thread(
+                insert,
+                provider=clean_provider,
+                model=clean_model,
+                caller=f"embedded.proactive.{phase}",
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                cached_input_tokens=cached,
+                estimated_cost_cny=cost,
+                success=True,
+            )
         )
 
     async def record_recommendation_delivery(
